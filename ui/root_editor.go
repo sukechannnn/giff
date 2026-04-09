@@ -105,6 +105,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 	// File list filter state
 	var fileFilterQuery string
+	var fileFilterMode bool
 
 	// Search state
 	var searchQuery string
@@ -207,6 +208,24 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	var lineNumberMap = make(map[int]int)
 	dirCollapseState := NewDirCollapseState()
 
+	// findFirstFileIndex finds the nearest file (non-directory) entry.
+	// Searches backwards from 'from', then forward from the beginning.
+	findFirstFileIndex := func(from int) int {
+		if from > 0 {
+			for i := from - 1; i >= 0; i-- {
+				if i < len(fileList) && !fileList[i].IsDirectory {
+					return i
+				}
+			}
+		}
+		for i, entry := range fileList {
+			if !entry.IsDirectory {
+				return i
+			}
+		}
+		return 0
+	}
+
 	// Commit message input area
 	commitTextArea := tview.NewTextArea().
 		SetPlaceholder("Enter commit message (Option+Enter to commit, Ctrl+O to return, Ctrl+L to file list, Esc to cancel)")
@@ -232,9 +251,11 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 	// Terminal command input
 	terminalInput := tview.NewInputField().
-		SetLabel("[giff] $ ").
+		SetLabel("(giff) $ ").
 		SetFieldBackgroundColor(util.BackgroundColor.ToTcellColor()).
-		SetLabelColor(tcell.ColorAqua)
+		SetLabelStyle(tcell.StyleDefault.
+			Foreground(tcell.ColorAqua).
+			Background(util.BackgroundColor.ToTcellColor()))
 	terminalInput.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 	terminalInput.SetBorder(false)
 
@@ -297,7 +318,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 
 		fileListView.Clear()
-		fileListView.SetText(buildFileListContent(leftPaneFocused))
+		fileListView.SetText(buildFileListContent(leftPaneFocused && !fileFilterMode))
 
 		// Scroll position handling
 		if shouldPreserveScroll {
@@ -560,6 +581,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		currentDiffText:   &currentDiffText,
 		preserveScrollRow: &preserveScrollRow,
 		ignoreWhitespace:  &ignoreWhitespace,
+		isFilterMode:      &fileFilterMode,
 		filterQuery:       &fileFilterQuery,
 
 		// Collections
@@ -702,8 +724,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 							if newSelection >= 0 {
 								currentSelection = newSelection
 							} else {
-								// If selected file disappeared, go back to the top
-								currentSelection = 0
+								// If selected file disappeared, find nearest file
+								currentSelection = findFirstFileIndex(currentSelection)
 								// If focus is on diff view, return to file list
 								if !leftPaneFocused {
 									leftPaneFocused = true
@@ -814,43 +836,53 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			}
 			terminalInput.SetText("")
 
-			// Execute command via shell (with snapshot for aliases)
-			shell := os.Getenv("SHELL")
-			if shell == "" {
-				shell = "sh"
-			}
-			var cmdScript string
-			if snapPath := util.GetSnapshotPath(); snapPath != "" {
-				cmdScript = fmt.Sprintf("source %q 2>/dev/null; %s", snapPath, cmdText)
-			} else {
-				cmdScript = cmdText
-			}
-			cmd := exec.Command(shell, "-c", cmdScript)
-			cmd.Dir = repoRoot
-			output, err := cmd.CombinedOutput()
+			// Show running state
+			terminalOutput.Clear()
+			terminalOutput.SetText("[dimgray]running...[-]")
 
-			// Append command and output to terminal view
-			fmt.Fprintf(terminalOutput, "[aqua]$ %s[-]\n", tview.Escape(cmdText))
-			if err != nil {
-				fmt.Fprintf(terminalOutput, "[red]%s[-]", tview.Escape(string(output)))
-				if len(output) == 0 || output[len(output)-1] != '\n' {
-					fmt.Fprintln(terminalOutput)
+			// Execute command asynchronously to avoid UI freeze
+			go func() {
+				shell := os.Getenv("SHELL")
+				if shell == "" {
+					shell = "sh"
 				}
-				fmt.Fprintf(terminalOutput, "[red]exit: %s[-]\n", err.Error())
-			} else {
-				if len(output) > 0 {
-					fmt.Fprintf(terminalOutput, "%s", tview.Escape(string(output)))
-					if output[len(output)-1] != '\n' {
-						fmt.Fprintln(terminalOutput)
+				var cmdScript string
+				if snapPath := util.GetSnapshotPath(); snapPath != "" {
+					cmdScript = fmt.Sprintf("source %q 2>/dev/null; eval %q", snapPath, cmdText)
+				} else {
+					cmdScript = cmdText
+				}
+				cmd := exec.Command(shell, "-c", cmdScript)
+				cmd.Dir = repoRoot
+				output, err := cmd.CombinedOutput()
+
+				app.QueueUpdateDraw(func() {
+					// Clear and show result
+					terminalOutput.Clear()
+					var result strings.Builder
+					result.WriteString("[#50E88A]$ " + tview.Escape(cmdText) + "[-]\n")
+					if err != nil {
+						if len(output) > 0 {
+							result.WriteString("[red]" + tview.Escape(string(output)) + "[-]")
+							if output[len(output)-1] != '\n' {
+								result.WriteString("\n")
+							}
+						}
+						result.WriteString("[red]exit: " + err.Error() + "[-]")
+					} else if len(output) > 0 {
+						result.WriteString(tview.Escape(string(output)))
+						if output[len(output)-1] != '\n' {
+							result.WriteString("\n")
+						}
 					}
-				}
-			}
-			terminalOutput.ScrollToEnd()
+					terminalOutput.SetText(result.String())
 
-			// Refresh file list in case git state changed
-			refreshFileList()
-			updateFileListView()
-			updateSelectedFileDiff()
+					// Refresh file list in case git state changed
+					refreshFileList()
+					updateFileListView()
+					updateSelectedFileDiff()
+				})
+			}()
 		case tcell.KeyEscape:
 			exitTerminalMode()
 		}
@@ -895,8 +927,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				// Call updateFileListView to rebuild fileList
 				updateFileListView()
 
-				// Move cursor to the top after commit
-				currentSelection = 0
+				// Move cursor to the first file after commit
+				currentSelection = findFirstFileIndex(0)
 
 				// Update view again to reflect correct selection position
 				updateFileListView()

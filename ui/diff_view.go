@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -606,20 +607,31 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				if ctx.readOnly {
 					return nil
 				}
-				// Open file in $EDITOR
+				// Open file in $EDITOR at current line
 				if *ctx.currentFile != "" {
 					editor := os.Getenv("EDITOR")
 					if editor == "" {
 						editor = "vim"
 					}
+					lineNum := getCursorFileLineNumber(ctx)
+					editorBase := filepath.Base(editor)
 					ctx.app.Suspend(func() {
-						cmd := exec.Command(editor, *ctx.currentFile)
+						var cmd *exec.Cmd
+						if lineNum > 0 && (editorBase == "vim" || editorBase == "nvim") {
+							cmd = exec.Command(editor, fmt.Sprintf("+%d", lineNum), *ctx.currentFile)
+						} else {
+							cmd = exec.Command(editor, *ctx.currentFile)
+						}
 						cmd.Dir = ctx.repoRoot
 						cmd.Stdin = os.Stdin
 						cmd.Stdout = os.Stdout
 						cmd.Stderr = os.Stderr
 						cmd.Run()
 					})
+					// Clear selection
+					*ctx.isSelecting = false
+					*ctx.selectStart = -1
+					*ctx.selectEnd = -1
 					ctx.refreshFileList()
 					ctx.updateFileListView()
 					ctx.updateCurrentDiffText(*ctx.currentFile, *ctx.currentStatus, ctx.repoRoot, ctx.currentDiffText, *ctx.ignoreWhitespace)
@@ -629,12 +641,26 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'c':
-				// Open file in VSCode
+				// Open file in VSCode at current line
 				if *ctx.currentFile != "" {
-					cmd := exec.Command("code", *ctx.currentFile)
+					lineNum := getCursorFileLineNumber(ctx)
+					var arg string
+					if lineNum > 0 {
+						arg = fmt.Sprintf("%s:%d", *ctx.currentFile, lineNum)
+					} else {
+						arg = *ctx.currentFile
+					}
+					cmd := exec.Command("code", "-g", arg)
 					cmd.Dir = ctx.repoRoot
 					if err := cmd.Start(); err != nil {
 						ctx.updateGlobalStatus("Failed to open VSCode", "tomato")
+					}
+					// Clear selection
+					*ctx.isSelecting = false
+					*ctx.selectStart = -1
+					*ctx.selectEnd = -1
+					if ctx.viewUpdater != nil {
+						ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 					}
 				}
 				return nil
@@ -1012,6 +1038,34 @@ func searchInUnifiedContent(content *UnifiedViewContent, query string) []int {
 		}
 	}
 	return matches
+}
+
+// getCursorFileLineNumber returns the file line number at the current cursor position.
+// Returns 0 if the line number cannot be determined.
+func getCursorFileLineNumber(ctx *DiffViewContext) int {
+	if ctx.currentDiffText == nil || *ctx.currentDiffText == "" {
+		return 0
+	}
+
+	cursorIdx := *ctx.cursorY
+
+	// For unified view, map display index to original diff index (excluding folds)
+	if !*ctx.isSplitView && ctx.foldState != nil {
+		displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		if mapped, ok := displayMapping[cursorIdx]; ok {
+			cursorIdx = mapped
+		}
+	}
+
+	_, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
+	if num, ok := newLineMap[cursorIdx]; ok {
+		return num
+	}
+	oldLineMap, _ := createLineNumberMapping(*ctx.currentDiffText)
+	if num, ok := oldLineMap[cursorIdx]; ok {
+		return num
+	}
+	return 0
 }
 
 // performSearch executes search with current searchInput and updates matches/cursor

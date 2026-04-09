@@ -382,6 +382,8 @@ func (glv *GitLogView) showCommitDetails() {
 	var selectEnd = -1
 	var preserveScrollRow = -1
 	var ignoreWhitespace bool
+	var fileFilterQuery string
+	var fileFilterMode bool
 	var gPressed bool
 	var lastGTime time.Time
 	var searchQuery string
@@ -610,6 +612,8 @@ func (glv *GitLogView) showCommitDetails() {
 		currentDiffText:   &currentDiffText,
 		preserveScrollRow: &preserveScrollRow,
 		ignoreWhitespace:  &ignoreWhitespace,
+		isFilterMode:      &fileFilterMode,
+		filterQuery:       &fileFilterQuery,
 
 		fileList:         &fileList,
 		dirCollapseState: dirCollapseState,

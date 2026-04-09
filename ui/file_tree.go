@@ -55,6 +55,11 @@ func moveFileListSelection(ctx *FileListKeyContext, direction int) {
 		}
 		next += direction
 	}
+
+	// If moving up on a file and no more files found, scroll to top
+	if !onDirectory && direction < 0 {
+		ctx.fileListView.ScrollTo(0, 0)
+	}
 }
 
 // findParentDirectory finds the parent directory entry for the given entry
@@ -70,34 +75,11 @@ func findParentDirectory(fileList *[]FileEntry, currentIdx int) int {
 	return -1
 }
 
-// handleFileListLeft handles left/h key (VSCode-like):
-// file → parent dir, expanded dir → collapse, collapsed dir → parent dir
+// handleFileListLeft handles left/H key: move to parent directory
 func handleFileListLeft(ctx *FileListKeyContext) {
 	if *ctx.currentSelection < 0 || *ctx.currentSelection >= len(*ctx.fileList) {
 		return
 	}
-	fileEntry := (*ctx.fileList)[*ctx.currentSelection]
-
-	if fileEntry.IsDirectory && ctx.dirCollapseState != nil {
-		if !ctx.dirCollapseState.IsCollapsed(fileEntry.StageStatus, fileEntry.Path) {
-			// Expanded directory -> collapse it
-			ctx.dirCollapseState.SetCollapsed(fileEntry.StageStatus, fileEntry.Path, true)
-			ctx.updateFileListView()
-			if *ctx.currentSelection >= len(*ctx.fileList) {
-				*ctx.currentSelection = len(*ctx.fileList) - 1
-				ctx.updateFileListView()
-			}
-			return
-		}
-		// Already collapsed directory -> move to parent directory
-		if parent := findParentDirectory(ctx.fileList, *ctx.currentSelection); parent >= 0 {
-			*ctx.currentSelection = parent
-			ctx.updateFileListView()
-		}
-		return
-	}
-
-	// On a file -> move to parent directory
 	if parent := findParentDirectory(ctx.fileList, *ctx.currentSelection); parent >= 0 {
 		*ctx.currentSelection = parent
 		ctx.updateFileListView()
@@ -341,7 +323,7 @@ type FileListKeyContext struct {
 	readOnly bool // if true, disable staging/discard operations
 
 	// File filter state
-	isFilterMode bool
+	isFilterMode *bool
 	filterInput  string
 	filterQuery  *string // active filter (empty = no filter)
 
@@ -399,25 +381,15 @@ func applyFileFilter(ctx *FileListKeyContext) {
 func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 	ctx.fileListView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Filter mode input handling
-		if ctx.isFilterMode {
+		if *ctx.isFilterMode {
 			switch event.Key() {
 			case tcell.KeyEnter:
-				// Confirm filter
-				*ctx.filterQuery = ctx.filterInput
-				ctx.isFilterMode = false
-				if *ctx.filterQuery != "" && ctx.setGlobalStatusText != nil {
-					query := strings.ToLower(*ctx.filterQuery)
-					matched := 0
-					for _, entry := range *ctx.fileList {
-						if !entry.IsDirectory && strings.Contains(strings.ToLower(entry.Path), query) {
-							matched++
-						}
-					}
-					ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d matched][-]", tview.Escape(*ctx.filterQuery), matched))
-				}
+				// Confirm filter and apply
+				*ctx.isFilterMode = false
+				applyFileFilter(ctx)
 			case tcell.KeyEsc:
 				// Cancel filter
-				ctx.isFilterMode = false
+				*ctx.isFilterMode = false
 				ctx.filterInput = ""
 				*ctx.filterQuery = ""
 				ctx.updateFileListView()
@@ -429,10 +401,14 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					runes := []rune(ctx.filterInput)
 					ctx.filterInput = string(runes[:len(runes)-1])
 				}
-				applyFileFilter(ctx)
+				if ctx.setGlobalStatusText != nil {
+					ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s[-]", tview.Escape(ctx.filterInput)))
+				}
 			case tcell.KeyRune:
 				ctx.filterInput += string(event.Rune())
-				applyFileFilter(ctx)
+				if ctx.setGlobalStatusText != nil {
+					ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s[-]", tview.Escape(ctx.filterInput)))
+				}
 			}
 			return nil
 		}
@@ -616,6 +592,35 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 'L':
 				handleFileListRight(ctx)
 				return nil
+			case 'J': // Toggle between directory and file: on file -> next dir, on dir -> next file
+				onDir := (*ctx.fileList)[*ctx.currentSelection].IsDirectory
+				for i := *ctx.currentSelection + 1; i < len(*ctx.fileList); i++ {
+					if (*ctx.fileList)[i].IsDirectory != onDir {
+						*ctx.currentSelection = i
+						ctx.updateFileListView()
+						if !(*ctx.fileList)[i].IsDirectory {
+							if ctx.diffDebounceTimer != nil {
+								ctx.diffDebounceTimer.Stop()
+							}
+							ctx.diffDebounceTimer = time.AfterFunc(80*time.Millisecond, func() {
+								ctx.app.QueueUpdateDraw(func() {
+									ctx.updateSelectedFileDiff()
+								})
+							})
+						}
+						break
+					}
+				}
+				return nil
+			case 'K': // Move to previous directory
+				for i := *ctx.currentSelection - 1; i >= 0; i-- {
+					if (*ctx.fileList)[i].IsDirectory {
+						*ctx.currentSelection = i
+						ctx.updateFileListView()
+						break
+					}
+				}
+				return nil
 			case 's':
 				// Toggle split view
 				*ctx.isSplitView = !*ctx.isSplitView
@@ -669,8 +674,9 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				return nil
 			case '/':
 				// Start file filter mode
-				ctx.isFilterMode = true
+				*ctx.isFilterMode = true
 				ctx.filterInput = ""
+				ctx.updateFileListView() // Redraw without cursor highlight
 				if ctx.setGlobalStatusText != nil {
 					ctx.setGlobalStatusText("[white]/[-]")
 				}

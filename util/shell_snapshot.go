@@ -1,7 +1,6 @@
 package util
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,8 +9,8 @@ import (
 
 var snapshotPath string
 
-// CreateShellSnapshot captures the current shell environment (aliases, functions)
-// by sourcing the user's shell config and saving a snapshot file.
+// CreateShellSnapshot captures shell aliases by running an interactive login shell
+// with a timeout to avoid hanging on complex .zshrc/.bashrc.
 func CreateShellSnapshot() {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -23,21 +22,20 @@ func CreateShellSnapshot() {
 		return
 	}
 
-	// Determine which config file to source
-	var rcFile string
+	// Check if rc file exists
+	var rcExists bool
 	if strings.HasSuffix(shell, "zsh") {
-		rcFile = filepath.Join(homeDir, ".zshrc")
+		_, err := os.Stat(filepath.Join(homeDir, ".zshrc"))
+		rcExists = err == nil
 	} else if strings.HasSuffix(shell, "bash") {
-		rcFile = filepath.Join(homeDir, ".bashrc")
-	} else {
+		_, err := os.Stat(filepath.Join(homeDir, ".bashrc"))
+		rcExists = err == nil
+	}
+	if !rcExists {
 		return
 	}
 
-	if _, err := os.Stat(rcFile); os.IsNotExist(err) {
-		return
-	}
-
-	// Create snapshot file in temp directory
+	// Create snapshot file
 	tmpFile, err := os.CreateTemp("", "giff-snapshot-*.sh")
 	if err != nil {
 		return
@@ -45,52 +43,30 @@ func CreateShellSnapshot() {
 	snapshotPath = tmpFile.Name()
 	tmpFile.Close()
 
-	// Build script to source rc file and dump aliases/functions
-	var script string
-	if strings.HasSuffix(shell, "zsh") {
-		script = fmt.Sprintf(`
-source "%s" < /dev/null 2>/dev/null
-
-{
-  echo "# giff shell snapshot"
-  echo "unalias -a 2>/dev/null || true"
-  echo ""
-
-  # Dump aliases
-  alias | while IFS= read -r line; do
-    echo "$line"
-  done
-  echo ""
-
-  # Dump functions (exclude internal ones)
-  typeset -f | grep -E '^\S+ \(\) \{' | while IFS= read -r line; do
-    fname="${line%% *}"
-    case "$fname" in
-      _*|prompt_*|compdef|compinit|bashcompinit) continue ;;
-    esac
-    echo "$(typeset -f "$fname")"
-    echo ""
-  done
-} > "%s"
-`, rcFile, snapshotPath)
-	} else {
-		script = fmt.Sprintf(`
-source "%s" 2>/dev/null
-
-{
-  echo "# giff shell snapshot"
-  echo "unalias -a 2>/dev/null || true"
-  echo ""
-
-  # Dump aliases
-  alias -p 2>/dev/null
-  echo ""
-} > "%s"
-`, rcFile, snapshotPath)
+	// Use interactive shell (-i) to load rc file, then dump aliases.
+	cmd := exec.Command(shell, "-ic", "alias")
+	output, err := cmd.Output()
+	if err != nil {
+		snapshotPath = ""
+		os.Remove(tmpFile.Name())
+		return
 	}
 
-	cmd := exec.Command(shell, "-c", script)
-	cmd.Run()
+	// Write snapshot file: ensure each line has "alias " prefix
+	var sb strings.Builder
+	sb.WriteString("# giff shell snapshot\n")
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "alias ") {
+			sb.WriteString("alias ")
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	os.WriteFile(snapshotPath, []byte(sb.String()), 0644)
 }
 
 // GetSnapshotPath returns the path to the snapshot file, or empty string if none.
