@@ -414,6 +414,27 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					}
 				}
 				return nil
+			case 'h':
+				// Scroll left in split view
+				if *ctx.isSplitView {
+					_, col := ctx.beforeView.GetScrollOffset()
+					if col > 0 {
+						row, _ := ctx.beforeView.GetScrollOffset()
+						ctx.beforeView.ScrollTo(row, col-4)
+						row2, _ := ctx.afterView.GetScrollOffset()
+						ctx.afterView.ScrollTo(row2, col-4)
+					}
+				}
+				return nil
+			case 'l':
+				// Scroll right in split view
+				if *ctx.isSplitView {
+					row, col := ctx.beforeView.GetScrollOffset()
+					ctx.beforeView.ScrollTo(row, col+4)
+					row2, _ := ctx.afterView.GetScrollOffset()
+					ctx.afterView.ScrollTo(row2, col+4)
+				}
+				return nil
 			case 'V':
 				// Shift+V to start selection mode
 				if !*ctx.isSelecting {
@@ -511,40 +532,44 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				if *ctx.isSelecting && *ctx.currentFile != "" {
 					start := *ctx.selectStart
 					end := *ctx.selectEnd
-
-					// For unified view, exclude fold indicators
-					if !*ctx.isSplitView {
-						displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-						if ms, ok := displayMapping[start]; ok {
-							start = ms
-						}
-						if me, ok := displayMapping[end]; ok {
-							end = me
-						}
-					}
-
 					if start > end {
 						start, end = end, start
 					}
 
-					oldLineMap, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
-
-					// Collect file line numbers within selection range (prefer newLineMap, fall back to oldLineMap)
-					startLine := -1
-					endLine := -1
-					for i := start; i <= end; i++ {
-						num := -1
-						if n, ok := newLineMap[i]; ok {
-							num = n
-						} else if n, ok := oldLineMap[i]; ok {
-							num = n
-						}
-						if num >= 0 {
-							if startLine == -1 || num < startLine {
-								startLine = num
+					var startLine, endLine int
+					if _, ok := ctx.viewUpdater.(*FileViewUpdater); ok {
+						// File viewer mode: line number = index + 1
+						startLine = start + 1
+						endLine = end + 1
+					} else {
+						// Diff mode: use line number mapping
+						if !*ctx.isSplitView {
+							displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+							if ms, ok := displayMapping[start]; ok {
+								start = ms
 							}
-							if num > endLine {
-								endLine = num
+							if me, ok := displayMapping[end]; ok {
+								end = me
+							}
+						}
+
+						oldLineMap, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
+						startLine = -1
+						endLine = -1
+						for i := start; i <= end; i++ {
+							num := -1
+							if n, ok := newLineMap[i]; ok {
+								num = n
+							} else if n, ok := oldLineMap[i]; ok {
+								num = n
+							}
+							if num >= 0 {
+								if startLine == -1 || num < startLine {
+									startLine = num
+								}
+								if num > endLine {
+									endLine = num
+								}
 							}
 						}
 					}
@@ -1045,6 +1070,11 @@ func searchInUnifiedContent(content *UnifiedViewContent, query string) []int {
 func getCursorFileLineNumber(ctx *DiffViewContext) int {
 	if ctx.currentDiffText == nil || *ctx.currentDiffText == "" {
 		return 0
+	}
+
+	// File viewer mode: line number is simply cursorY + 1
+	if _, ok := ctx.viewUpdater.(*FileViewUpdater); ok {
+		return *ctx.cursorY + 1
 	}
 
 	cursorIdx := *ctx.cursorY
