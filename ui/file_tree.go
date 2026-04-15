@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,11 +17,104 @@ import (
 // moveFileListSelection moves the file list selection.
 // If currently on a directory, moves between directories. If on a file, moves between files.
 // matchesFilter checks if a file entry matches the current filter query
+// expandBraces expands a glob pattern with {a,b,c} into multiple patterns.
+// e.g. "*.{ts,tsx}" -> ["*.ts", "*.tsx"]
+func expandBraces(pattern string) []string {
+	start := strings.Index(pattern, "{")
+	if start < 0 {
+		return []string{pattern}
+	}
+	end := strings.Index(pattern[start:], "}")
+	if end < 0 {
+		return []string{pattern}
+	}
+	end += start
+
+	prefix := pattern[:start]
+	suffix := pattern[end+1:]
+	alternatives := strings.Split(pattern[start+1:end], ",")
+
+	var results []string
+	for _, alt := range alternatives {
+		expanded := expandBraces(prefix + strings.TrimSpace(alt) + suffix)
+		results = append(results, expanded...)
+	}
+	return results
+}
+
+// matchGlob matches a file path against a glob pattern supporting ** for any path segments.
+func matchGlob(pattern, path string) bool {
+	pattern = strings.ToLower(pattern)
+	path = strings.ToLower(path)
+
+	if strings.Contains(pattern, "**") {
+		// Split on ** and match each part
+		parts := strings.SplitN(pattern, "**", 2)
+		before := parts[0]
+		after := strings.TrimPrefix(parts[1], "/")
+
+		// Before must match the prefix (or be empty)
+		if before != "" {
+			before = strings.TrimSuffix(before, "/")
+			if !strings.HasPrefix(path, before+"/") && path != before {
+				return false
+			}
+		}
+
+		if after == "" {
+			return true
+		}
+
+		// Try matching "after" pattern against every possible suffix
+		segments := strings.Split(path, "/")
+		for i := range segments {
+			candidate := strings.Join(segments[i:], "/")
+			if matched, _ := filepath.Match(after, candidate); matched {
+				return true
+			}
+			// Also try matching just the filename
+			if i == len(segments)-1 {
+				if matched, _ := filepath.Match(after, segments[i]); matched {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// No **, try direct match or substring
+	if matched, _ := filepath.Match(pattern, path); matched {
+		return true
+	}
+	// Also try matching against just the filename
+	base := filepath.Base(path)
+	if matched, _ := filepath.Match(pattern, base); matched {
+		return true
+	}
+	return false
+}
+
 func matchesFilter(entry FileEntry, filterQuery string) bool {
 	if filterQuery == "" {
 		return true
 	}
-	return !entry.IsDirectory && strings.Contains(strings.ToLower(entry.Path), strings.ToLower(filterQuery))
+	if entry.IsDirectory {
+		return false
+	}
+
+	// Check if it looks like a glob pattern
+	if strings.ContainsAny(filterQuery, "*?{[") {
+		patterns := expandBraces(filterQuery)
+		for _, p := range patterns {
+			if matchGlob(p, entry.Path) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Plain substring match
+	return strings.Contains(strings.ToLower(entry.Path), strings.ToLower(filterQuery))
 }
 
 func moveFileListSelection(ctx *FileListKeyContext, direction int) {
@@ -175,15 +269,15 @@ func BuildFileListContent(
 		delete(lineNumberMap, k)
 	}
 
-	// Filter files if query is set
+	// Filter files if query is set (supports glob patterns)
 	filterFn := func(files []git.FileInfo) []git.FileInfo {
 		if filterQuery == "" {
 			return files
 		}
-		q := strings.ToLower(filterQuery)
 		var filtered []git.FileInfo
 		for _, f := range files {
-			if strings.Contains(strings.ToLower(f.Path), q) {
+			entry := FileEntry{Path: f.Path}
+			if matchesFilter(entry, filterQuery) {
 				filtered = append(filtered, f)
 			}
 		}
@@ -277,6 +371,54 @@ func BuildFileListContentForCommit(
 	return content.String()
 }
 
+// BuildFileListContentForBrowser builds file list content for file browser mode.
+// Uses git.FileInfo list (all tracked files) and renders with tree structure.
+func BuildFileListContentForBrowser(
+	allFiles []git.FileInfo,
+	currentSelection int,
+	focusedPane bool,
+	fileList *[]FileEntry,
+	lineNumberMap map[int]int,
+	collapseState *DirCollapseState,
+	filterQuery string,
+) string {
+	*fileList = (*fileList)[:0]
+	for k := range lineNumberMap {
+		delete(lineNumberMap, k)
+	}
+
+	// Apply filter (supports glob patterns)
+	var filtered []git.FileInfo
+	if filterQuery != "" {
+		for _, f := range allFiles {
+			entry := FileEntry{Path: f.Path}
+			if matchesFilter(entry, filterQuery) {
+				filtered = append(filtered, f)
+			}
+		}
+	} else {
+		filtered = allFiles
+	}
+
+	tree := buildFileTree(filtered)
+	statusMap := make(map[string]string, len(filtered))
+	for _, fi := range filtered {
+		statusMap[fi.Path] = fi.ChangeStatus
+	}
+
+	var content strings.Builder
+	regionIndex := 0
+	currentLine := 0
+
+	renderFileTreeForGitFiles(
+		tree, 0, "", &content, fileList,
+		"browser", &regionIndex, currentSelection, focusedPane,
+		lineNumberMap, &currentLine, filtered, collapseState, statusMap,
+	)
+
+	return content.String()
+}
+
 // FileListKeyContext contains all the context needed for file list key bindings
 type FileListKeyContext struct {
 	// UI Components
@@ -337,6 +479,8 @@ type FileListKeyContext struct {
 	setGlobalStatusText    func(string)
 	onEsc                  func() // if non-nil, called on Esc key
 	openTerminal           func() // if non-nil, opens terminal command input
+	toggleFileBrowser      func() // if non-nil, toggles file browser mode
+	isFileBrowserMode      *bool  // pointer to file browser mode flag
 }
 
 // applyFileFilter updates the file list selection to match the filter query
@@ -351,7 +495,22 @@ func applyFileFilter(ctx *FileListKeyContext) {
 		return
 	}
 	*ctx.filterQuery = ctx.filterInput
-	// Find first matching file
+
+	// Rebuild file list with filter applied
+	ctx.updateFileListView()
+
+	// Expand all directories in the filtered result
+	if ctx.dirCollapseState != nil {
+		for _, entry := range *ctx.fileList {
+			if entry.IsDirectory {
+				ctx.dirCollapseState.SetCollapsed(entry.StageStatus, entry.Path, false)
+			}
+		}
+		// Rebuild again with directories expanded
+		ctx.updateFileListView()
+	}
+
+	// Find first matching file and count matches
 	query := strings.ToLower(ctx.filterInput)
 	matched := 0
 	firstMatch := -1
@@ -478,16 +637,14 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					*ctx.isSelecting = false
 					*ctx.selectStart = -1
 					*ctx.selectEnd = -1
-
-					ctx.updateCurrentDiffText(file, status, ctx.repoRoot, ctx.currentDiffText, *ctx.ignoreWhitespace)
 				}
 
-				// Update viewer (for cursor display)
-				if *ctx.isSplitView {
-					updateSplitViewWithCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.cursorY, *ctx.currentFile)
-				} else {
-					foldState := ctx.diffViewContext.foldState
-					updateDiffViewWithCursor(ctx.diffView, *ctx.currentDiffText, *ctx.cursorY, foldState, *ctx.currentFile, ctx.repoRoot)
+				// Use updateSelectedFileDiff which handles both diff and browser modes
+				ctx.updateSelectedFileDiff()
+
+				// Redraw with cursor for the right pane
+				if ctx.diffViewContext != nil && ctx.diffViewContext.viewUpdater != nil {
+					ctx.diffViewContext.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 				}
 
 				// Save scroll position before moving to viewer
@@ -822,7 +979,13 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					ctx.updateSelectedFileDiff()
 				}
 				return nil
-			case 'd': // 'd' to discard changes of the selected file (delete if untracked)
+			case 'd': // 'd' to discard changes, or back to diff mode from file browser
+				if ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode {
+					if ctx.toggleFileBrowser != nil {
+						ctx.toggleFileBrowser()
+					}
+					return nil
+				}
 				if ctx.readOnly {
 					return nil
 				}
@@ -952,6 +1115,11 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 							ctx.updateGlobalStatus("Failed to open VSCode", "tomato")
 						}
 					}
+				}
+				return nil
+			case 'f': // 'f' to toggle file browser mode
+				if ctx.toggleFileBrowser != nil {
+					ctx.toggleFileBrowser()
 				}
 				return nil
 			case 't': // 't' to open terminal command input

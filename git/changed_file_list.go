@@ -13,6 +13,25 @@ type FileInfo struct {
 	ChangeStatus string // "added", "deleted", "modified", "untracked"
 }
 
+// GetAllTrackedFiles returns all files tracked by git in the repository
+func GetAllTrackedFiles(repoPath string) ([]FileInfo, error) {
+	cmd := exec.Command("git", "-c", "core.quotepath=false", "ls-files")
+	cmd.Dir = repoPath
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var files []FileInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		files = append(files, FileInfo{Path: line})
+	}
+	return files, nil
+}
+
 // FindGitRoot searches for the .git directory by traversing up from the current directory
 func FindGitRoot(startPath string) (string, error) {
 	dir, err := filepath.Abs(startPath)

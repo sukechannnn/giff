@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alecthomas/chroma/v2"
 	"github.com/rivo/tview"
 	"github.com/sukechannnn/giff/util"
 )
@@ -398,4 +399,103 @@ func createLineNumberMapping(diffText string) (map[int]int, map[int]int) {
 	}
 
 	return oldLineMap, newLineMap
+}
+
+// FileViewUpdater implements DiffViewUpdater for file content viewing
+type FileViewUpdater struct {
+	diffView    *tview.TextView
+	filePath    *string
+	searchQuery *string
+}
+
+func (f *FileViewUpdater) UpdateWithoutCursor(content string) {
+	renderFileView(f.diffView, content, -1, -1, -1, false, *f.filePath, f.getSearchQuery())
+}
+
+func (f *FileViewUpdater) UpdateWithCursor(content string, cursorY int) {
+	renderFileView(f.diffView, content, cursorY, -1, -1, false, *f.filePath, f.getSearchQuery())
+}
+
+func (f *FileViewUpdater) UpdateWithSelection(content string, cursorY int, selectStart int, selectEnd int, isSelecting bool) {
+	renderFileView(f.diffView, content, cursorY, selectStart, selectEnd, isSelecting, *f.filePath, f.getSearchQuery())
+}
+
+func (f *FileViewUpdater) getSearchQuery() string {
+	if f.searchQuery != nil {
+		return *f.searchQuery
+	}
+	return ""
+}
+
+// renderFileView renders file content with syntax highlighting and line numbers
+func renderFileView(diffView *tview.TextView, content string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string, searchQuery string) {
+	diffView.Clear()
+
+	if content == "" {
+		diffView.SetText("[dimgray]Empty file[-]")
+		return
+	}
+
+	lines := strings.Split(content, "\n")
+	// Remove trailing empty line from Split
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Tokenize for syntax highlighting
+	var allTokens [][]chroma.Token
+	if filePath != "" {
+		allTokens = util.TokenizeCode(filePath, lines)
+	}
+
+	// Calculate line number width
+	maxDigits := len(fmt.Sprintf("%d", len(lines)))
+
+	for i, line := range lines {
+		lineNum := fmt.Sprintf("[dimgray]%*d │ [-]", maxDigits, i+1)
+
+		var lineContent string
+		if allTokens != nil && i < len(allTokens) && len(allTokens[i]) > 0 {
+			lineContent = util.RenderHighlightedLine(allTokens[i], "")
+		} else {
+			lineContent = tview.Escape(line)
+		}
+
+		// Apply search highlighting
+		if searchQuery != "" {
+			lineContent = highlightSearchInTaggedText(lineContent, searchQuery)
+		}
+
+		// Apply cursor/selection background
+		bg := ""
+		lineNumFg := "dimgray"
+		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
+			bg = "dimgrey"
+			lineNumFg = "white"
+		} else if cursorY >= 0 && i == cursorY {
+			bg = "blue"
+			lineNumFg = "white"
+		}
+
+		if bg != "" {
+			highlighted := util.ReplaceBackground(lineContent, bg)
+			if searchQuery != "" {
+				highlighted = util.ReplaceBackgroundPreserving(lineContent, bg, []string{util.SearchHighlightBg})
+			}
+			diffView.Write([]byte("[" + lineNumFg + ":" + bg + "]" + fmt.Sprintf("%*d │ ", maxDigits, i+1) + highlighted + strings.Repeat(" ", 500) + "[-:-]\n"))
+		} else {
+			diffView.Write([]byte(lineNum + lineContent + "\n"))
+		}
+	}
+
+	// Scroll to keep cursor visible
+	if cursorY >= 0 {
+		_, _, _, height := diffView.GetInnerRect()
+		currentRow, _ := diffView.GetScrollOffset()
+		if cursorY >= currentRow+height-1 {
+			diffView.ScrollTo(cursorY-height+2, 0)
+		} else if cursorY < currentRow {
+			diffView.ScrollTo(cursorY, 0)
+		}
+	}
 }

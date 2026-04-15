@@ -88,6 +88,16 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// Terminal command mode state
 	var isTerminalMode bool = false
 	var focusBeforeTerminal tview.Primitive = nil
+	shellHistory := util.LoadShellHistory(1000)
+	var historyIndex int = -1    // -1 = not browsing history
+	var historyStash string = "" // stash current input when browsing
+
+	// File browser mode state
+	var isFileBrowserMode bool = false
+	var browserFiles []git.FileInfo
+	var browserCollapseState = NewDirCollapseState()
+	var browserFilterQuery string
+	var browserFilterMode bool
 	// Keep current file info
 	var currentFile string
 	var currentStatus string
@@ -305,8 +315,28 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// Variable to preserve scroll position
 	var preserveScrollRow int = -1
 
+	// Build browser file list content
+	buildBrowserContent := func(focusedPane bool) string {
+		return BuildFileListContentForBrowser(
+			browserFiles,
+			currentSelection,
+			focusedPane,
+			&fileList,
+			lineNumberMap,
+			browserCollapseState,
+			browserFilterQuery,
+		)
+	}
+
 	// Update initial display
 	updateFileListView := func() {
+		// File browser mode: use browser content
+		if isFileBrowserMode {
+			fileListView.Clear()
+			fileListView.SetText(buildBrowserContent(leftPaneFocused && !browserFilterMode))
+			return
+		}
+
 		// Save current scroll position
 		currentRow, currentCol := fileListView.GetScrollOffset()
 
@@ -361,6 +391,37 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 	// Function to update the diff of the selected file
 	updateSelectedFileDiff := func() {
+		// File browser mode: show file content
+		if isFileBrowserMode {
+			if len(fileList) == 0 {
+				diffView.SetText("No files")
+				return
+			}
+			if currentSelection < 0 {
+				currentSelection = 0
+			} else if currentSelection >= len(fileList) {
+				currentSelection = len(fileList) - 1
+			}
+			entry := fileList[currentSelection]
+			if entry.IsDirectory {
+				diffView.SetText("dir: " + entry.Path + "/")
+				currentFile = ""
+				currentDiffText = ""
+				return
+			}
+			currentFile = entry.Path
+			content, err := util.ReadFileContent(entry.Path, repoRoot)
+			if err != nil {
+				diffView.SetText("[red]Error reading file: " + err.Error() + "[-]")
+				currentDiffText = ""
+				return
+			}
+			currentDiffText = content
+			cursorY = 0
+			renderFileView(diffView, content, -1, -1, -1, false, currentFile, "")
+			return
+		}
+
 		// Adjust selection range
 		if len(fileList) == 0 {
 			// If file list is empty
@@ -608,9 +669,73 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				globalStatusView.SetText(text)
 			}
 		},
-		openTerminal: openTerminalFunc,
+		openTerminal:      openTerminalFunc,
+		isFileBrowserMode: &isFileBrowserMode,
 	}
 	SetupFileListKeyBindings(fileListKeyContext)
+
+	// Set toggleFileBrowser after fileListKeyContext is created (needs reference)
+	fileListKeyContext.toggleFileBrowser = func() {
+		if isFileBrowserMode {
+			// Exit file browser mode
+			isFileBrowserMode = false
+			fileListKeyContext.dirCollapseState = dirCollapseState
+			fileListKeyContext.filterQuery = &fileFilterQuery
+			fileListKeyContext.isFilterMode = &fileFilterMode
+			fileListView.SetTitle("j/k: navigate, Enter: switch to diff")
+			// Restore diff view updater
+			diffViewContext.viewUpdater = &UnifiedViewUpdater{
+				diffView:    diffView,
+				foldState:   foldState,
+				filePath:    &currentFile,
+				repoRoot:    repoRoot,
+				searchQuery: &searchQuery,
+			}
+			updateFileListView()
+			updateSelectedFileDiff()
+			if restoreStatusFunc != nil {
+				restoreStatusFunc()
+			}
+		} else {
+			// Enter file browser mode
+			allFiles, err := git.GetAllTrackedFiles(repoRoot)
+			if err != nil {
+				updateGlobalStatus("Failed to get file list: "+err.Error(), "tomato")
+				return
+			}
+			browserFiles = allFiles
+			isFileBrowserMode = true
+			currentSelection = 0
+			browserFilterQuery = ""
+			browserFilterMode = false
+			fileFilterQuery = ""
+			fileFilterMode = false
+			// Collapse all directories by default
+			browserCollapseState = NewDirCollapseState()
+			// Build initial list to find directories
+			BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+			for _, entry := range fileList {
+				if entry.IsDirectory {
+					browserCollapseState.SetCollapsed("browser", entry.Path, true)
+				}
+			}
+			fileListKeyContext.dirCollapseState = browserCollapseState
+			fileListKeyContext.filterQuery = &browserFilterQuery
+			fileListKeyContext.isFilterMode = &browserFilterMode
+			fileListView.SetTitle("File Browser (f: back to diff)")
+			// Switch diff view to file viewer updater
+			diffViewContext.viewUpdater = &FileViewUpdater{
+				diffView:    diffView,
+				filePath:    &currentFile,
+				searchQuery: &searchQuery,
+			}
+			updateFileListView()
+			updateSelectedFileDiff()
+			if restoreStatusFunc != nil {
+				restoreStatusFunc()
+			}
+		}
+	}
 
 	// Start goroutine only when auto-refresh is enabled
 	if enableAutoRefresh {
@@ -659,6 +784,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			for {
 				select {
 				case <-ticker.C:
+					// Skip auto-refresh in file browser mode
+					if isFileBrowserMode {
+						continue
+					}
 					// Get new file list
 					newStaged, newModified, newUntracked, err := git.GetChangedFiles(repoRoot)
 					if err != nil {
@@ -827,6 +956,48 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
+	// Handle up/down arrow for shell history browsing
+	terminalInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyUp:
+			if len(shellHistory) == 0 {
+				return nil
+			}
+			if historyIndex == -1 {
+				// Start browsing: stash current input as prefix filter
+				historyStash = terminalInput.GetText()
+			}
+			// Find next matching entry
+			prefix := strings.ToLower(historyStash)
+			for next := historyIndex + 1; next < len(shellHistory); next++ {
+				if prefix == "" || strings.HasPrefix(strings.ToLower(shellHistory[next]), prefix) {
+					historyIndex = next
+					terminalInput.SetText(shellHistory[next])
+					return nil
+				}
+			}
+			return nil
+		case tcell.KeyDown:
+			if historyIndex < 0 {
+				return nil
+			}
+			// Find previous matching entry
+			prefix := strings.ToLower(historyStash)
+			for next := historyIndex - 1; next >= 0; next-- {
+				if prefix == "" || strings.HasPrefix(strings.ToLower(shellHistory[next]), prefix) {
+					historyIndex = next
+					terminalInput.SetText(shellHistory[next])
+					return nil
+				}
+			}
+			// No more matches: back to stashed input
+			historyIndex = -1
+			terminalInput.SetText(historyStash)
+			return nil
+		}
+		return event
+	})
+
 	terminalInput.SetDoneFunc(func(key tcell.Key) {
 		switch key {
 		case tcell.KeyEnter:
@@ -835,6 +1006,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				return
 			}
 			terminalInput.SetText("")
+			historyIndex = -1
+			historyStash = ""
 
 			// Show running state
 			terminalOutput.Clear()
