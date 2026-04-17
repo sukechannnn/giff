@@ -74,18 +74,27 @@ func MapUnifiedDisplayToOriginalIdx(diffText string, foldState *FoldState, fileP
 // detectFoldableRanges detects ranges that can be folded
 // totalLines is the total number of lines in the file (0 if unknown, which disables top/bottom folds)
 func detectFoldableRanges(oldLineMap, newLineMap map[int]int, minGap int, totalLines int) []FoldableRange {
-	// Use newLineMap primarily (additions/context), fall back to oldLineMap for deletions
+	// Merge both line maps: use newLineMap line numbers where available, fall back to oldLineMap
+	mergedMap := make(map[int]int)
+	for idx, lineNum := range oldLineMap {
+		mergedMap[idx] = lineNum
+	}
+	for idx, lineNum := range newLineMap {
+		mergedMap[idx] = lineNum // newLineMap takes priority
+	}
+	if len(mergedMap) == 0 {
+		return nil
+	}
+
+	// Use newLineMap for line number references (file line numbers in new version)
 	lineMap := newLineMap
 	if len(lineMap) == 0 {
 		lineMap = oldLineMap
 	}
-	if len(lineMap) == 0 {
-		return nil
-	}
 
-	// Get sorted display indices
+	// Get sorted display indices from merged map (includes all diff lines)
 	var displayIndices []int
-	for idx := range lineMap {
+	for idx := range mergedMap {
 		displayIndices = append(displayIndices, idx)
 	}
 
@@ -93,11 +102,21 @@ func detectFoldableRanges(oldLineMap, newLineMap map[int]int, minGap int, totalL
 
 	var ranges []FoldableRange
 
+	// Helper to get file line number for a display index (prefer newLineMap, fall back to oldLineMap)
+	getLineNum := func(displayIdx int) (int, bool) {
+		if num, ok := newLineMap[displayIdx]; ok {
+			return num, true
+		}
+		if num, ok := oldLineMap[displayIdx]; ok {
+			return num, true
+		}
+		return 0, false
+	}
+
 	// Check for lines before the first diff line (top fold)
 	if len(displayIndices) > 0 {
 		firstDisplayIdx := displayIndices[0]
-		firstLineNum := lineMap[firstDisplayIdx]
-		if firstLineNum > 1 {
+		if firstLineNum, ok := getLineNum(firstDisplayIdx); ok && firstLineNum > 1 {
 			topGap := firstLineNum - 1
 			if topGap >= minGap {
 				ranges = append(ranges, FoldableRange{
@@ -116,8 +135,11 @@ func detectFoldableRanges(oldLineMap, newLineMap map[int]int, minGap int, totalL
 		currentDisplayIdx := displayIndices[i]
 		nextDisplayIdx := displayIndices[i+1]
 
-		currentLineNum := lineMap[currentDisplayIdx]
-		nextLineNum := lineMap[nextDisplayIdx]
+		currentLineNum, ok1 := getLineNum(currentDisplayIdx)
+		nextLineNum, ok2 := getLineNum(nextDisplayIdx)
+		if !ok1 || !ok2 {
+			continue
+		}
 
 		gap := nextLineNum - currentLineNum - 1
 		if gap >= minGap {
@@ -134,7 +156,7 @@ func detectFoldableRanges(oldLineMap, newLineMap map[int]int, minGap int, totalL
 	// Check for lines after the last diff line (bottom fold)
 	if totalLines > 0 && len(displayIndices) > 0 {
 		lastDisplayIdx := displayIndices[len(displayIndices)-1]
-		lastLineNum := lineMap[lastDisplayIdx]
+		lastLineNum, _ := getLineNum(lastDisplayIdx)
 		if lastLineNum < totalLines {
 			bottomGap := totalLines - lastLineNum
 			if bottomGap >= minGap {

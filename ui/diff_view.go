@@ -80,6 +80,7 @@ type DiffViewContext struct {
 	updateStatusTitle     func()
 	onEsc                 func() // if non-nil, call this instead of returning to left pane on Esc
 	openTerminal          func() // if non-nil, opens terminal command input
+	resizeFileList        func(delta int) // resize file list width
 }
 
 // scrollDiffView scrolls the diff view by the specified direction and handles cursor following
@@ -415,7 +416,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'h':
-				// Scroll left in split view
+				// Scroll left
 				if *ctx.isSplitView {
 					_, col := ctx.beforeView.GetScrollOffset()
 					if col > 0 {
@@ -424,15 +425,23 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						row2, _ := ctx.afterView.GetScrollOffset()
 						ctx.afterView.ScrollTo(row2, col-4)
 					}
+				} else {
+					row, col := ctx.diffView.GetScrollOffset()
+					if col > 0 {
+						ctx.diffView.ScrollTo(row, col-4)
+					}
 				}
 				return nil
 			case 'l':
-				// Scroll right in split view
+				// Scroll right
 				if *ctx.isSplitView {
 					row, col := ctx.beforeView.GetScrollOffset()
 					ctx.beforeView.ScrollTo(row, col+4)
 					row2, _ := ctx.afterView.GetScrollOffset()
 					ctx.afterView.ScrollTo(row2, col+4)
+				} else {
+					row, col := ctx.diffView.GetScrollOffset()
+					ctx.diffView.ScrollTo(row, col+4)
 				}
 				return nil
 			case 'V':
@@ -447,59 +456,59 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'y':
-				lines := getSelectableDiffLines(*ctx.currentDiffText)
-				if len(lines) == 0 {
-					ctx.updateGlobalStatus("No diff content to copy", "tomato")
-					return nil
-				}
-
 				start := *ctx.cursorY
 				end := *ctx.cursorY
 				if *ctx.isSelecting && *ctx.selectStart >= 0 && *ctx.selectEnd >= 0 {
 					start = *ctx.selectStart
 					end = *ctx.selectEnd
 				}
-
-				// For unified view, convert to actual diff line indices excluding fold indicators
-				if !*ctx.isSplitView {
-					displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-					if mappedStart, ok := displayMapping[start]; ok {
-						start = mappedStart
-					}
-					if mappedEnd, ok := displayMapping[end]; ok {
-						end = mappedEnd
-					}
-				}
-
 				if start > end {
 					start, end = end, start
 				}
 
-				if start < 0 {
-					start = 0
-				}
-				if end < 0 {
-					end = 0
-				}
-				if start >= len(lines) {
-					ctx.updateGlobalStatus("Selection is out of range", "tomato")
-					return nil
-				}
-				if end >= len(lines) {
-					end = len(lines) - 1
+				// Get content directly from unified view (includes fold expanded lines)
+				var sanitized []string
+				if !*ctx.isSplitView {
+					content := getCachedUnifiedContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+					if content != nil && len(content.Lines) > 0 {
+						if start < 0 {
+							start = 0
+						}
+						if end >= len(content.Lines) {
+							end = len(content.Lines) - 1
+						}
+						for i := start; i <= end; i++ {
+							line := content.Lines[i]
+							// Strip tview tags to get plain text
+							plain := stripTviewTags(line.Content)
+							sanitized = append(sanitized, stripDiffPrefix(plain))
+						}
+					}
+				} else {
+					lines := getSelectableDiffLines(*ctx.currentDiffText)
+					if start < 0 {
+						start = 0
+					}
+					if end >= len(lines) {
+						end = len(lines) - 1
+					}
+					if start < len(lines) {
+						for _, line := range lines[start : end+1] {
+							sanitized = append(sanitized, stripDiffPrefix(line))
+						}
+					}
 				}
 
-				selected := lines[start : end+1]
-				sanitized := make([]string, 0, len(selected))
-				for _, line := range selected {
-					sanitized = append(sanitized, stripDiffPrefix(line))
+				if len(sanitized) == 0 {
+					ctx.updateGlobalStatus("No content to copy", "tomato")
+					return nil
 				}
 				text := strings.Join(sanitized, "\n")
 				if err := commands.CopyToClipboard(text); err != nil {
 					ctx.updateGlobalStatus("Failed to copy diff lines", "tomato")
 				} else {
 					message := "Copied line to clipboard"
-					if len(selected) > 1 {
+					if len(sanitized) > 1 {
 						message = "Copied lines to clipboard"
 					}
 					ctx.updateGlobalStatus(message, "forestgreen")
@@ -689,6 +698,12 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					}
 				}
 				return nil
+			case 'd':
+				// In read-only mode (git log), 'd' exits back
+				if ctx.readOnly && ctx.onEsc != nil {
+					ctx.onEsc()
+					return nil
+				}
 			case 't':
 				// Open terminal command input
 				if ctx.openTerminal != nil {
@@ -896,6 +911,16 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 							ctx.updateGlobalStatus("Failed to stage file", "tomato")
 						}
 					}
+				}
+				return nil
+			case '+', '=': // '+' to widen file list
+				if ctx.resizeFileList != nil {
+					ctx.resizeFileList(1)
+				}
+				return nil
+			case '-': // '-' to narrow file list
+				if ctx.resizeFileList != nil {
+					ctx.resizeFileList(-1)
 				}
 				return nil
 			case 'q':
