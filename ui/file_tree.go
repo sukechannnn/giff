@@ -481,6 +481,7 @@ type FileListKeyContext struct {
 	openTerminal           func() // if non-nil, opens terminal command input
 	toggleFileBrowser      func() // if non-nil, toggles file browser mode
 	isFileBrowserMode      *bool  // pointer to file browser mode flag
+	resizeFileList         func(delta int) // resize file list width
 }
 
 // applyFileFilter updates the file list selection to match the filter query
@@ -749,6 +750,16 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 'L':
 				handleFileListRight(ctx)
 				return nil
+			case 'h': // Scroll file list left
+				row, col := ctx.fileListView.GetScrollOffset()
+				if col > 0 {
+					ctx.fileListView.ScrollTo(row, col-4)
+				}
+				return nil
+			case 'l': // Scroll file list right
+				row, col := ctx.fileListView.GetScrollOffset()
+				ctx.fileListView.ScrollTo(row, col+4)
+				return nil
 			case 'J': // Toggle between directory and file: on file -> next dir, on dir -> next file
 				onDir := (*ctx.fileList)[*ctx.currentSelection].IsDirectory
 				for i := *ctx.currentSelection + 1; i < len(*ctx.fileList); i++ {
@@ -979,7 +990,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					ctx.updateSelectedFileDiff()
 				}
 				return nil
-			case 'd': // 'd' to discard changes, or back to diff mode from file browser
+			case 'd': // 'd' to discard changes, or back to diff/log
 				if ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode {
 					if ctx.toggleFileBrowser != nil {
 						ctx.toggleFileBrowser()
@@ -987,6 +998,9 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					return nil
 				}
 				if ctx.readOnly {
+					if ctx.onEsc != nil {
+						ctx.onEsc()
+					}
 					return nil
 				}
 				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
@@ -1125,6 +1139,16 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 't': // 't' to open terminal command input
 				if ctx.openTerminal != nil {
 					ctx.openTerminal()
+				}
+				return nil
+			case '+', '=': // '+' to widen file list
+				if ctx.resizeFileList != nil {
+					ctx.resizeFileList(1)
+				}
+				return nil
+			case '-': // '-' to narrow file list
+				if ctx.resizeFileList != nil {
+					ctx.resizeFileList(-1)
 				}
 				return nil
 			case 'q': // 'q' to quit application
