@@ -46,6 +46,7 @@ func NewGitLogView(app *tview.Application, repoRoot string, onExit func()) *GitL
 		SetWrap(false).
 		SetScrollable(true)
 	logView.SetBorder(true).SetTitle("Git Log (j/k: navigate, Enter: show commit, Esc: exit)")
+	logView.SetBorderColor(util.CommitAreaBorderColor.ToTcellColor())
 	logView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	flex := tview.NewFlex().
@@ -309,7 +310,10 @@ func (glv *GitLogView) showCommitDetails() {
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
+	borderColor := util.CommitAreaBorderColor.ToTcellColor()
+
 	fileListView.SetBorder(true).SetTitle("Changed Files")
+	fileListView.SetBorderColor(borderColor)
 	fileListView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	diffView := tview.NewTextView().
@@ -317,8 +321,8 @@ func (glv *GitLogView) showCommitDetails() {
 		SetRegions(true).
 		SetWrap(false)
 	diffView.SetBorder(true).SetTitle("File Diff")
+	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
-	diffView.SetBorderStyle(tcell.StyleDefault)
 
 	unifiedViewFlex := tview.NewFlex().
 		AddItem(diffView, 0, 1, false)
@@ -329,6 +333,7 @@ func (glv *GitLogView) showCommitDetails() {
 		SetRegions(true).
 		SetWrap(false)
 	beforeView.SetBorder(true).SetTitle("Before")
+	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	afterView := tview.NewTextView().
@@ -336,6 +341,7 @@ func (glv *GitLogView) showCommitDetails() {
 		SetRegions(true).
 		SetWrap(false)
 	afterView.SetBorder(true).SetTitle("After")
+	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	splitViewFlex := tview.NewFlex().
@@ -349,6 +355,7 @@ func (glv *GitLogView) showCommitDetails() {
 		SetTextAlign(tview.AlignLeft).
 		SetWrap(false)
 	statusView.SetBorder(true)
+	statusView.SetBorderColor(borderColor)
 	statusView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	commitStatusMessage := "j/k:move  /:search  e:fold  s:split  V:select  C-y:copy  Esc:back  q:quit"
@@ -671,6 +678,12 @@ func (glv *GitLogView) setupLogKeyBindings() {
 		}
 
 		switch event.Rune() {
+		case 'd':
+			// Return to diff mode
+			if glv.onExit != nil {
+				glv.onExit()
+			}
+			return nil
 		case 'q':
 			glv.quitApplication()
 			return nil

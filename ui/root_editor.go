@@ -157,7 +157,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft).
 		SetWrap(false)
+	borderColor := util.CommitAreaBorderColor.ToTcellColor()
+
 	globalStatusView.SetBorder(true)
+	globalStatusView.SetBorderColor(borderColor)
 	globalStatusView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Create flex layout (vertical split, then horizontal split below)
@@ -169,6 +172,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetRegions(true).
 		SetWrap(false)
 	fileListView.SetBorder(true).SetTitle("j/k: navigate, Enter: switch to diff")
+	fileListView.SetBorderColor(borderColor)
 	fileListView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Create text view for right pane (diff display)
@@ -177,8 +181,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetRegions(true).
 		SetWrap(false)
 	diffView.SetBorder(true).SetTitle("Enter: back to list")
+	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
-	diffView.SetBorderStyle(tcell.StyleDefault)
 
 	// Flex container for unified view
 	unifiedViewFlex := tview.NewFlex().
@@ -191,6 +195,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetRegions(true).
 		SetWrap(false)
 	beforeView.SetBorder(true).SetTitle("Before")
+	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	afterView := tview.NewTextView().
@@ -198,6 +203,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetRegions(true).
 		SetWrap(false)
 	afterView.SetBorder(true).SetTitle("After")
+	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Flex container for split view
@@ -291,6 +297,21 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// Left-right split flex
 	contentFlex := tview.NewFlex()
 	contentFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
+
+	// Dynamic layout ratio
+	fileListRatio := FileListFlexRatio
+	diffViewRatio := DiffViewFlexRatio
+
+	rebuildContentFlex := func() {
+		contentFlex.Clear()
+		rightPane := unifiedViewFlex
+		if isSplitView {
+			rightPane = splitViewFlex
+		}
+		contentFlex.
+			AddItem(fileListView, 0, fileListRatio, leftPaneFocused).
+			AddItem(rightPane, 0, diffViewRatio, !leftPaneFocused)
+	}
 
 	// Layout settings
 	contentFlex.
@@ -613,6 +634,16 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		updateCurrentDiffText: updateCurrentDiffText,
 		updateStatusTitle:     updateStatusTitle,
 		openTerminal:          openTerminalFunc,
+		resizeFileList: func(delta int) {
+			newFileRatio := fileListRatio + delta
+			newDiffRatio := diffViewRatio - delta
+			if newFileRatio < 1 || newDiffRatio < 1 {
+				return
+			}
+			fileListRatio = newFileRatio
+			diffViewRatio = newDiffRatio
+			rebuildContentFlex()
+		},
 	}
 	SetupDiffViewKeyBindings(diffViewContext)
 
@@ -671,6 +702,16 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		},
 		openTerminal:      openTerminalFunc,
 		isFileBrowserMode: &isFileBrowserMode,
+		resizeFileList: func(delta int) {
+			newFileRatio := fileListRatio + delta
+			newDiffRatio := diffViewRatio - delta
+			if newFileRatio < 1 || newDiffRatio < 1 {
+				return
+			}
+			fileListRatio = newFileRatio
+			diffViewRatio = newDiffRatio
+			rebuildContentFlex()
+		},
 	}
 	SetupFileListKeyBindings(fileListKeyContext)
 
