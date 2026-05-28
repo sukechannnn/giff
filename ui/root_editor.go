@@ -20,8 +20,8 @@ var preferUnstagedSection bool = false
 
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
-var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  C-k:commit  C-j:amend  H/L:dir  s:split  w:ws  /:filter  v:editor  c:code  C-l:log  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
-var diffViewKeyMessage = "a:stage lines  A:stage file  V:select  g/G:top/end  /:search  e:fold  s:split  w:ws  y:yank  Y:copy path  C-e/C-y:scroll  Esc:back  q:quit"
+var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:filter  v:editor  c/n:code  C-l:log  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
+var diffViewKeyMessage = "a:stage lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  e:fold  s:split  w:ws  y:yank  Y:copy path  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
 var restoreStatusFunc func()
@@ -73,7 +73,7 @@ func updateCurrentDiffText(filePath string, status string, repoRoot string, curr
 	}
 }
 
-func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFiles []git.FileInfo, repoRoot string, patchFilePath string, onUpdate func(), enableAutoRefresh bool) tview.Primitive {
+func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFiles []git.FileInfo, repoRoot string, patchFilePath string, onUpdate func(), enableAutoRefresh bool, initialFile string, externalFile string) tview.Primitive {
 	// Keep references for updating file lists
 	stagedFilesPtr := &stagedFiles
 	modifiedFilesPtr := &modifiedFiles
@@ -98,6 +98,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	var browserCollapseState = NewDirCollapseState()
 	var browserFilterQuery string
 	var browserFilterMode bool
+	// browserRoot is the directory used to resolve browser-mode file paths.
+	// Defaults to repoRoot but is replaced with an external file's parent
+	// directory when the user passes a path outside the repo on startup.
+	browserRoot := repoRoot
 	// Keep current file info
 	var currentFile string
 	var currentStatus string
@@ -213,6 +217,11 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	splitViewFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Save cursor restore flags (will be restored after fileList is built)
+	// An explicit initialFile argument overrides any carried-over state.
+	if initialFile != "" {
+		savedTargetFile = initialFile
+		preferUnstagedSection = false
+	}
 	needsCursorRestore := preferUnstagedSection || savedTargetFile != ""
 	savedPreferUnstaged := preferUnstagedSection
 	savedTarget := savedTargetFile
@@ -240,6 +249,40 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			}
 		}
 		return 0
+	}
+
+	// findIndexByPathStatus returns the index of the file entry matching the
+	// given path and stage status in the current fileList, or -1 if absent.
+	findIndexByPathStatus := func(path, status string) int {
+		for i, fe := range fileList {
+			if !fe.IsDirectory && fe.Path == path && fe.StageStatus == status {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// nearestSurvivingSelection picks a new selection after the previously
+	// selected file disappeared from the (already rebuilt) fileList. It walks
+	// upward through the previous ordering to the closest file that still
+	// exists, then downward, falling back to the first file. This keeps the
+	// cursor visible (one file up) instead of vanishing on --watch refresh.
+	nearestSurvivingSelection := func(oldList []FileEntry, oldSel int) int {
+		for i := oldSel - 1; i >= 0; i-- {
+			if i < len(oldList) && !oldList[i].IsDirectory {
+				if idx := findIndexByPathStatus(oldList[i].Path, oldList[i].StageStatus); idx >= 0 {
+					return idx
+				}
+			}
+		}
+		for i := oldSel + 1; i < len(oldList); i++ {
+			if !oldList[i].IsDirectory {
+				if idx := findIndexByPathStatus(oldList[i].Path, oldList[i].StageStatus); idx >= 0 {
+					return idx
+				}
+			}
+		}
+		return findFirstFileIndex(0)
 	}
 
 	// Commit message input area
@@ -431,7 +474,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				return
 			}
 			currentFile = entry.Path
-			content, err := util.ReadFileContent(entry.Path, repoRoot)
+			content, err := util.ReadFileContent(entry.Path, browserRoot)
 			if err != nil {
 				diffView.SetText("[red]Error reading file: " + err.Error() + "[-]")
 				currentDiffText = ""
@@ -563,6 +606,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		app.SetFocus(terminalInput)
 	}
 
+	undoStack := NewUndoStack(repoRoot)
+
 	// Set up key input handling for right pane (same behavior as file_view.go)
 	// Set up diff view key bindings
 	diffViewContext := &DiffViewContext{
@@ -621,6 +666,9 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		searchInput:               &searchInput,
 		searchCursorYBeforeSearch: &searchCursorYBeforeSearch,
 
+		// Undo
+		undoStack: undoStack,
+
 		// Callbacks
 		updateFileListView: updateFileListView,
 		updateGlobalStatus: updateGlobalStatus,
@@ -676,6 +724,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		isFilterMode:      &fileFilterMode,
 		filterQuery:       &fileFilterQuery,
 
+		// Key handling state (shared with diff view so `gg` times out together)
+		gPressed:  &gPressed,
+		lastGTime: &lastGTime,
+
 		// Collections
 		fileList: &fileList,
 
@@ -687,6 +739,9 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 		// Diff view context
 		diffViewContext: diffViewContext,
+
+		// Undo
+		undoStack: undoStack,
 
 		// Callbacks
 		updateFileListView:     updateFileListView,
@@ -720,6 +775,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		if isFileBrowserMode {
 			// Exit file browser mode
 			isFileBrowserMode = false
+			browserRoot = repoRoot
 			fileListKeyContext.dirCollapseState = dirCollapseState
 			fileListKeyContext.filterQuery = &fileFilterQuery
 			fileListKeyContext.isFilterMode = &fileFilterMode
@@ -739,6 +795,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			}
 		} else {
 			// Enter file browser mode
+			browserRoot = repoRoot
 			allFiles, err := git.GetAllTrackedFiles(repoRoot)
 			if err != nil {
 				updateGlobalStatus("Failed to get file list: "+err.Error(), "tomato")
@@ -776,6 +833,29 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				restoreStatusFunc()
 			}
 		}
+	}
+
+	// If an external file path was supplied (outside the repo), bootstrap the
+	// file browser with just that file so the user lands directly in file view.
+	if externalFile != "" {
+		browserRoot = filepath.Dir(externalFile)
+		browserFiles = []git.FileInfo{{Path: filepath.Base(externalFile)}}
+		isFileBrowserMode = true
+		currentSelection = 0
+		browserFilterQuery = ""
+		browserFilterMode = false
+		browserCollapseState = NewDirCollapseState()
+		fileListKeyContext.dirCollapseState = browserCollapseState
+		fileListKeyContext.filterQuery = &browserFilterQuery
+		fileListKeyContext.isFilterMode = &browserFilterMode
+		fileListView.SetTitle("File Browser (f: back to diff)")
+		diffViewContext.viewUpdater = &FileViewUpdater{
+			diffView:    diffView,
+			filePath:    &currentFile,
+			searchQuery: &searchQuery,
+		}
+		updateFileListView()
+		updateSelectedFileDiff()
 	}
 
 	// Start goroutine only when auto-refresh is enabled
@@ -883,6 +963,17 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 							*modifiedFilesPtr = newModified
 							*untrackedFilesPtr = newUntracked
 
+							// Snapshot the previous ordering before rebuilding so
+							// we can fall back to a neighboring file if the
+							// selected one disappears.
+							oldList := make([]FileEntry, len(fileList))
+							copy(oldList, fileList)
+							oldSelection := currentSelection
+
+							// Rebuild fileList against the new git state first so
+							// selection is resolved against the up-to-date list.
+							updateFileListView()
+
 							// Restore selection position (search by both filename and status)
 							newSelection := -1
 							for i, fileEntry := range fileList {
@@ -894,8 +985,11 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 							if newSelection >= 0 {
 								currentSelection = newSelection
 							} else {
-								// If selected file disappeared, find nearest file
-								currentSelection = findFirstFileIndex(currentSelection)
+								// Selected file's diff disappeared (e.g. edited away
+								// by an external tool under --watch). Move the cursor
+								// to the nearest preceding file that still exists so
+								// the highlight stays visible.
+								currentSelection = nearestSurvivingSelection(oldList, oldSelection)
 								// If focus is on diff view, return to file list
 								if !leftPaneFocused {
 									leftPaneFocused = true
@@ -904,7 +998,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 								}
 							}
 
-							// Update display
+							// Re-render with the resolved selection.
 							updateFileListView()
 						}
 
@@ -1174,33 +1268,42 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		AddItem(contentFlex, 0, 1, true)
 
 	mainFlex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Once the commit text area is open, let it handle Ctrl+K (kill to
+		// end of line) and Ctrl+J itself instead of swallowing them here.
+		if isCommitMode {
+			// Ctrl+O temporarily moves focus out of the commit area while
+			// keeping it visible; let Ctrl+K bring focus back to it.
+			if event.Key() == tcell.KeyCtrlK && app.GetFocus() != commitTextArea {
+				app.SetFocus(commitTextArea)
+				return nil
+			}
+			return event
+		}
 		if event.Key() == tcell.KeyCtrlK {
-			// Check if there are staged changes
 			if len(*stagedFilesPtr) == 0 {
 				updateGlobalStatus("No changes are staged for commit", "tomato")
 				return nil
 			}
 
-			if !isCommitMode {
-				// Save current focus before entering commit mode
-				if leftPaneFocused {
-					focusBeforeCommit = fileListView
-				} else if isSplitView {
-					focusBeforeCommit = splitViewFlex
-				} else {
-					focusBeforeCommit = diffView
-				}
-				isCommitMode = true
-				isAmendMode = false
-				mainFlex.AddItem(commitTextArea, 7, 0, true) // Height set to 7 to support multi-line input
-				app.SetFocus(commitTextArea)
+			if leftPaneFocused {
+				focusBeforeCommit = fileListView
+			} else if isSplitView {
+				focusBeforeCommit = splitViewFlex
 			} else {
-				app.SetFocus(commitTextArea)
+				focusBeforeCommit = diffView
 			}
+			isCommitMode = true
+			isAmendMode = false
+			mainFlex.AddItem(commitTextArea, 7, 0, true) // Height set to 7 to support multi-line input
+			app.SetFocus(commitTextArea)
 			return nil
 		}
 		if event.Key() == tcell.KeyCtrlJ {
-			// Get the latest commit message
+			if len(*stagedFilesPtr) == 0 {
+				updateGlobalStatus("No changes are staged for commit", "tomato")
+				return nil
+			}
+
 			cmd := exec.Command("git", "log", "-1", "--pretty=%B")
 			cmd.Dir = repoRoot
 			output, err := cmd.Output()
@@ -1209,24 +1312,19 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				lastCommitMsg = strings.TrimSpace(string(output))
 			}
 
-			if !isCommitMode {
-				// Save current focus before entering commit mode
-				if leftPaneFocused {
-					focusBeforeCommit = fileListView
-				} else if isSplitView {
-					focusBeforeCommit = splitViewFlex
-				} else {
-					focusBeforeCommit = diffView
-				}
-				isCommitMode = true
-				isAmendMode = true
-				commitTextArea.SetTitle("Commit Message (Amend)")
-				commitTextArea.SetText(lastCommitMsg, false)
-				mainFlex.AddItem(commitTextArea, 7, 0, true)
-				app.SetFocus(commitTextArea)
+			if leftPaneFocused {
+				focusBeforeCommit = fileListView
+			} else if isSplitView {
+				focusBeforeCommit = splitViewFlex
 			} else {
-				app.SetFocus(commitTextArea)
+				focusBeforeCommit = diffView
 			}
+			isCommitMode = true
+			isAmendMode = true
+			commitTextArea.SetTitle("Commit Message (Amend)")
+			commitTextArea.SetText(lastCommitMsg, false)
+			mainFlex.AddItem(commitTextArea, 7, 0, true)
+			app.SetFocus(commitTextArea)
 			return nil
 		}
 		return event

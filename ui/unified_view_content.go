@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -71,103 +70,123 @@ func MapUnifiedDisplayToOriginalIdx(diffText string, foldState *FoldState, fileP
 	return mapping
 }
 
-// detectFoldableRanges detects ranges that can be folded
-// totalLines is the total number of lines in the file (0 if unknown, which disables top/bottom folds)
-func detectFoldableRanges(oldLineMap, newLineMap map[int]int, minGap int, totalLines int) []FoldableRange {
-	// Merge both line maps: use newLineMap line numbers where available, fall back to oldLineMap
-	mergedMap := make(map[int]int)
-	for idx, lineNum := range oldLineMap {
-		mergedMap[idx] = lineNum
-	}
-	for idx, lineNum := range newLineMap {
-		mergedMap[idx] = lineNum // newLineMap takes priority
-	}
-	if len(mergedMap) == 0 {
-		return nil
-	}
+// detectFoldableRanges detects ranges that can be folded based on new-file line numbers.
+// Fold content is read from the current (new) file, so gap detection must use new-file
+// line numbers consistently. Mixing old and new line numbers (e.g., for `-` lines that
+// only have old-file numbers) produces spurious folds when many deletions or additions
+// cause the two numbering systems to diverge within a hunk.
+// totalLines is the total number of lines in the new file (0 if unknown, which disables bottom folds).
+func detectFoldableRanges(diffText string, minGap int, totalLines int) []FoldableRange {
+	lines := strings.Split(diffText, "\n")
 
-	// Use newLineMap for line number references (file line numbers in new version)
-	lineMap := newLineMap
-	if len(lineMap) == 0 {
-		lineMap = oldLineMap
+	// Parse diff, collecting display indices of lines that correspond to actual new-file
+	// lines (context and `+` lines). Track the new-file position before the first shown
+	// line and after the last one for top/bottom fold detection.
+	type shownEntry struct {
+		displayIdx int
+		newLine    int
 	}
+	var shown []shownEntry
 
-	// Get sorted display indices from merged map (includes all diff lines)
-	var displayIndices []int
-	for idx := range mergedMap {
-		displayIndices = append(displayIndices, idx)
-	}
+	displayLine := 0
+	var newLineNum int
+	inHunk := false
+	firstNewPosition := -1
 
-	sort.Ints(displayIndices)
-
-	var ranges []FoldableRange
-
-	// Helper to get file line number for a display index (prefer newLineMap, fall back to oldLineMap)
-	getLineNum := func(displayIdx int) (int, bool) {
-		if num, ok := newLineMap[displayIdx]; ok {
-			return num, true
-		}
-		if num, ok := oldLineMap[displayIdx]; ok {
-			return num, true
-		}
-		return 0, false
-	}
-
-	// Check for lines before the first diff line (top fold)
-	if len(displayIndices) > 0 {
-		firstDisplayIdx := displayIndices[0]
-		if firstLineNum, ok := getLineNum(firstDisplayIdx); ok && firstLineNum > 1 {
-			topGap := firstLineNum - 1
-			if topGap >= minGap {
-				ranges = append(ranges, FoldableRange{
-					StartLine: 1,
-					EndLine:   firstLineNum - 1,
-					InsertAt:  -1, // Special value: insert at the beginning
-					LineCount: topGap,
-					ID:        fmt.Sprintf("fold-top-1-%d", firstLineNum-1),
-				})
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			var newStart int
+			parts := strings.Split(line, " +")
+			if len(parts) >= 2 {
+				fmt.Sscanf(parts[1], "%d", &newStart)
 			}
+			newLineNum = newStart
+			inHunk = true
+			continue
 		}
-	}
-
-	// Check gaps between consecutive diff lines
-	for i := 0; i < len(displayIndices)-1; i++ {
-		currentDisplayIdx := displayIndices[i]
-		nextDisplayIdx := displayIndices[i+1]
-
-		currentLineNum, ok1 := getLineNum(currentDisplayIdx)
-		nextLineNum, ok2 := getLineNum(nextDisplayIdx)
-		if !ok1 || !ok2 {
+		if strings.HasPrefix(line, "diff --git") ||
+			strings.HasPrefix(line, "index ") ||
+			strings.HasPrefix(line, "--- ") ||
+			strings.HasPrefix(line, "+++ ") {
+			continue
+		}
+		if !inHunk {
+			continue
+		}
+		// Real diff body lines always start with a space, '+', or '-'. Anything
+		// else (empty trailing line from strings.Split, "\ No newline" markers)
+		// must not be treated as content or it shifts new-file line tracking.
+		if line == "" || strings.HasPrefix(line, "\\") {
 			continue
 		}
 
-		gap := nextLineNum - currentLineNum - 1
-		if gap >= minGap {
+		if firstNewPosition < 0 {
+			firstNewPosition = newLineNum
+		}
+
+		if strings.HasPrefix(line, "-") {
+			// `-` lines don't correspond to a new-file line; new position doesn't advance.
+		} else if strings.HasPrefix(line, "+") {
+			shown = append(shown, shownEntry{displayIdx: displayLine, newLine: newLineNum})
+			newLineNum++
+		} else {
+			shown = append(shown, shownEntry{displayIdx: displayLine, newLine: newLineNum})
+			newLineNum++
+		}
+		displayLine++
+	}
+
+	if displayLine == 0 {
+		return nil
+	}
+
+	lastNewPositionAfter := newLineNum
+
+	var ranges []FoldableRange
+
+	// Top fold: hidden lines before the first displayed line.
+	if firstNewPosition > 1 {
+		topGap := firstNewPosition - 1
+		if topGap >= minGap {
 			ranges = append(ranges, FoldableRange{
-				StartLine: currentLineNum + 1,
-				EndLine:   nextLineNum - 1,
-				InsertAt:  currentDisplayIdx, // Insert after current line
-				LineCount: gap,
-				ID:        fmt.Sprintf("fold-%d-%d", currentLineNum+1, nextLineNum-1),
+				StartLine: 1,
+				EndLine:   firstNewPosition - 1,
+				InsertAt:  -1, // Special value: insert at the beginning
+				LineCount: topGap,
+				ID:        fmt.Sprintf("fold-top-1-%d", firstNewPosition-1),
 			})
 		}
 	}
 
-	// Check for lines after the last diff line (bottom fold)
-	if totalLines > 0 && len(displayIndices) > 0 {
-		lastDisplayIdx := displayIndices[len(displayIndices)-1]
-		lastLineNum, _ := getLineNum(lastDisplayIdx)
-		if lastLineNum < totalLines {
-			bottomGap := totalLines - lastLineNum
-			if bottomGap >= minGap {
-				ranges = append(ranges, FoldableRange{
-					StartLine: lastLineNum + 1,
-					EndLine:   totalLines,
-					InsertAt:  -2, // Special value: insert at the end
-					LineCount: bottomGap,
-					ID:        fmt.Sprintf("fold-bottom-%d-%d", lastLineNum+1, totalLines),
-				})
-			}
+	// Mid folds: gaps between consecutive lines that actually show new-file content.
+	// Insert the fold indicator just before the next shown line so any intervening
+	// `-` lines render with the preceding change block, not after the fold.
+	for i := 0; i < len(shown)-1; i++ {
+		current := shown[i]
+		next := shown[i+1]
+		gap := next.newLine - current.newLine - 1
+		if gap >= minGap {
+			ranges = append(ranges, FoldableRange{
+				StartLine: current.newLine + 1,
+				EndLine:   next.newLine - 1,
+				InsertAt:  next.displayIdx - 1,
+				LineCount: gap,
+				ID:        fmt.Sprintf("fold-%d-%d", current.newLine+1, next.newLine-1),
+			})
+		}
+	}
+
+	// Bottom fold: hidden lines after the last displayed line.
+	if totalLines > 0 && lastNewPositionAfter <= totalLines {
+		bottomGap := totalLines - lastNewPositionAfter + 1
+		if bottomGap >= minGap {
+			ranges = append(ranges, FoldableRange{
+				StartLine: lastNewPositionAfter,
+				EndLine:   totalLines,
+				InsertAt:  -2, // Special value: insert at the end
+				LineCount: bottomGap,
+				ID:        fmt.Sprintf("fold-bottom-%d-%d", lastNewPositionAfter, totalLines),
+			})
 		}
 	}
 
@@ -186,7 +205,7 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 	totalLines := getFileTotalLines(filePath, repoRoot)
 
 	// Detect foldable ranges (minimum 3 lines gap)
-	foldableRanges := detectFoldableRanges(oldLineMap, newLineMap, 3, totalLines)
+	foldableRanges := detectFoldableRanges(diffText, 3, totalLines)
 
 	// Create maps for quick lookup
 	foldMap := make(map[int]*FoldableRange)

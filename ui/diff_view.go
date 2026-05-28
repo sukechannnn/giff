@@ -70,6 +70,9 @@ type DiffViewContext struct {
 	// Mode
 	readOnly bool // if true, disable staging/discard operations
 
+	// Undo stack for staging operations (nil in read-only mode)
+	undoStack *UndoStack
+
 	// Callbacks
 	updateFileListView    func()
 	updateGlobalStatus    func(string, string)
@@ -81,6 +84,106 @@ type DiffViewContext struct {
 	onEsc                 func() // if non-nil, call this instead of returning to left pane on Esc
 	openTerminal          func() // if non-nil, opens terminal command input
 	resizeFileList        func(delta int) // resize file list width
+}
+
+// applyUndoRedoInDiffView runs the given undo/redo action and refreshes both
+// the file list and the diff view to reflect the restored index state.
+func applyUndoRedoInDiffView(ctx *DiffViewContext, action func() (string, error), verb string) {
+	if ctx.undoStack == nil {
+		return
+	}
+	desc, err := action()
+	if err != nil {
+		if ctx.updateGlobalStatus != nil {
+			ctx.updateGlobalStatus(fmt.Sprintf("Nothing to %s", verb), "yellow")
+		}
+		return
+	}
+
+	ctx.refreshFileList()
+
+	// Try to locate the current file in the refreshed list so we can rebuild
+	// the diff against an accurate status. If missing, hand off to onUpdate.
+	currentFile := *ctx.currentFile
+	foundStatus := ""
+	if currentFile != "" {
+		// Prefer the same status we had; fall back to any entry with the path.
+		for _, fe := range *ctx.fileList {
+			if fe.IsDirectory || fe.Path != currentFile {
+				continue
+			}
+			if fe.StageStatus == *ctx.currentStatus {
+				foundStatus = fe.StageStatus
+				break
+			}
+			if foundStatus == "" {
+				foundStatus = fe.StageStatus
+			}
+		}
+	}
+
+	if foundStatus != "" {
+		*ctx.currentStatus = foundStatus
+		ctx.updateCurrentDiffText(currentFile, foundStatus, ctx.repoRoot, ctx.currentDiffText, *ctx.ignoreWhitespace)
+		*ctx.isSelecting = false
+		*ctx.selectStart = -1
+		*ctx.selectEnd = -1
+		if ctx.viewUpdater != nil {
+			ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
+		}
+		ctx.updateFileListView()
+	} else if ctx.onUpdate != nil {
+		ctx.onUpdate()
+	}
+
+	if ctx.updateGlobalStatus != nil {
+		label := "Undone"
+		if verb == "redo" {
+			label = "Redone"
+		}
+		ctx.updateGlobalStatus(fmt.Sprintf("%s: %s", label, desc), "forestgreen")
+	}
+}
+
+// moveCursorDown moves the cursor down by one line (same behavior as 'j').
+func moveCursorDown(ctx *DiffViewContext) {
+	maxLines := 0
+	if *ctx.isSplitView {
+		splitViewLines := getSplitViewLineCount(*ctx.currentDiffText)
+		if splitViewLines > 0 {
+			maxLines = splitViewLines - 1
+		}
+	} else {
+		if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
+			lineCount := GetUnifiedViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+			if lineCount > 0 {
+				maxLines = lineCount - 1
+			}
+		}
+	}
+
+	if *ctx.cursorY < maxLines {
+		(*ctx.cursorY)++
+		if *ctx.isSelecting {
+			*ctx.selectEnd = *ctx.cursorY
+		}
+		if ctx.viewUpdater != nil {
+			ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
+		}
+	}
+}
+
+// moveCursorUp moves the cursor up by one line (same behavior as 'k').
+func moveCursorUp(ctx *DiffViewContext) {
+	if *ctx.cursorY > 0 {
+		(*ctx.cursorY)--
+		if *ctx.isSelecting {
+			*ctx.selectEnd = *ctx.cursorY
+		}
+		if ctx.viewUpdater != nil {
+			ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
+		}
+	}
 }
 
 // scrollDiffView scrolls the diff view by the specified direction and handles cursor following
@@ -265,6 +368,18 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			// Ctrl+Y: scroll up one line
 			scrollDiffView(ctx, -1)
 			return nil
+		case tcell.KeyTab:
+			moveCursorDown(ctx)
+			return nil
+		case tcell.KeyBacktab:
+			moveCursorUp(ctx)
+			return nil
+		case tcell.KeyCtrlR:
+			if ctx.readOnly {
+				return nil
+			}
+			applyUndoRedoInDiffView(ctx, ctx.undoStack.Redo, "redo")
+			return nil
 		case tcell.KeyRune:
 			switch event.Rune() {
 			case 's':
@@ -375,45 +490,10 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'j':
-				// Move down
-				maxLines := 0
-				if *ctx.isSplitView {
-					// For split view, get valid line count
-					splitViewLines := getSplitViewLineCount(*ctx.currentDiffText)
-					if splitViewLines > 0 {
-						maxLines = splitViewLines - 1
-					}
-				} else {
-					// For normal view, get display line count (including folds)
-					if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
-						lineCount := GetUnifiedViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-						if lineCount > 0 {
-							maxLines = lineCount - 1
-						}
-					}
-				}
-
-				if *ctx.cursorY < maxLines {
-					(*ctx.cursorY)++
-					if *ctx.isSelecting {
-						*ctx.selectEnd = *ctx.cursorY
-					}
-					if ctx.viewUpdater != nil {
-						ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
-					}
-				}
+				moveCursorDown(ctx)
 				return nil
 			case 'k':
-				// Move up
-				if *ctx.cursorY > 0 {
-					(*ctx.cursorY)--
-					if *ctx.isSelecting {
-						*ctx.selectEnd = *ctx.cursorY
-					}
-					if ctx.viewUpdater != nil {
-						ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
-					}
-				}
+				moveCursorUp(ctx)
 				return nil
 			case 'h':
 				// Scroll left
@@ -636,7 +716,8 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				if ctx.readOnly {
 					return nil
 				}
-				ctx.updateGlobalStatus("undo is not implemented!", "tomato")
+				applyUndoRedoInDiffView(ctx, ctx.undoStack.Undo, "undo")
+				return nil
 			case 'v':
 				if ctx.readOnly {
 					return nil
@@ -735,6 +816,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				if ctx.readOnly {
 					return nil
 				}
+				snapshot, _ := ctx.undoStack.CaptureSnapshot()
 				// Call commandA function
 				// For unified view, convert to actual diff line indices excluding fold indicators
 				selectStart := *ctx.selectStart
@@ -768,6 +850,16 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				if result == nil {
 					return nil
+				}
+
+				// Only push the snapshot if the index actually changed (skip no-op
+				// cases such as selections that contained only context lines).
+				if result.NewDiffText != params.CurrentDiffText {
+					desc := "stage lines in " + *ctx.currentFile
+					if params.CurrentStatus == "staged" {
+						desc = "unstage lines in " + *ctx.currentFile
+					}
+					ctx.undoStack.Push(snapshot, desc)
 				}
 
 				// Apply results
@@ -849,6 +941,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				// Stage/unstage the current file
 				if *ctx.currentFile != "" {
+					snapshot, _ := ctx.undoStack.CaptureSnapshot()
 					var cmd *exec.Cmd
 					if *ctx.currentStatus == "staged" {
 						cmd = exec.Command("git", "-c", "core.quotepath=false", "reset", "HEAD", *ctx.currentFile)
@@ -860,6 +953,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					err := cmd.Run()
 					if err == nil {
 						wasStaged := (*ctx.currentStatus == "staged")
+						desc := "stage " + *ctx.currentFile
+						if wasStaged {
+							desc = "unstage " + *ctx.currentFile
+						}
+						ctx.undoStack.Push(snapshot, desc)
 
 						if *ctx.currentStatus == "staged" {
 							// Show diff of now-unstaged file

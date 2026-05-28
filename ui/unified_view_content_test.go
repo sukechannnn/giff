@@ -306,6 +306,117 @@ func TestColorizeLine(t *testing.T) {
 	}
 }
 
+func TestDetectFoldableRanges(t *testing.T) {
+	tests := []struct {
+		name       string
+		diffText   string
+		minGap     int
+		totalLines int
+		want       []FoldableRange
+	}{
+		{
+			name: "deletions followed by context and more deletions should not produce a mid fold",
+			// Without the fix, the gap between the context line (new=182) and the
+			// following `-` line (old=190) was computed as 7, producing a spurious
+			// fold that expanded arbitrary lines from the new file.
+			diffText: `diff --git a/test.txt b/test.txt
+index 123..456 789
+--- a/test.txt
++++ b/test.txt
+@@ -180,14 +180,4 @@
+ ctx1
+ ctx2
+-del1
+-del2
+-del3
+-del4
+-del5
+-del6
+-del7
+ ctx3
+-del8
+-del9
+ ctx4`,
+			minGap:     3,
+			totalLines: 0,
+			want: []FoldableRange{
+				{StartLine: 1, EndLine: 179, InsertAt: -1, LineCount: 179, ID: "fold-top-1-179"},
+			},
+		},
+		{
+			name: "single hunk with large initial gap produces top fold only",
+			diffText: `diff --git a/test.txt b/test.txt
+@@ -100,3 +100,3 @@
+ ctx
+-old
++new`,
+			minGap:     3,
+			totalLines: 0,
+			want: []FoldableRange{
+				{StartLine: 1, EndLine: 99, InsertAt: -1, LineCount: 99, ID: "fold-top-1-99"},
+			},
+		},
+		{
+			name: "multi-hunk diff produces mid fold between hunks",
+			diffText: `diff --git a/test.txt b/test.txt
+@@ -1,3 +1,3 @@
+ a
+-b
++B
+@@ -50,3 +50,3 @@
+ x
+-y
++Y`,
+			minGap:     3,
+			totalLines: 0,
+			want: []FoldableRange{
+				{StartLine: 3, EndLine: 49, InsertAt: 2, LineCount: 47, ID: "fold-3-49"},
+			},
+		},
+		{
+			// Real `git diff` output ends with a newline. Splitting on "\n"
+			// yields a trailing empty element that must not be tracked as a
+			// context line, otherwise newLineNum overshoots and the bottom
+			// fold drops one boundary line on expansion.
+			name: "trailing newline does not shift bottom fold start",
+			diffText: `diff --git a/file.txt b/file.txt
+@@ -10,9 +10,8 @@
+ line10
+ line11
+ line12
+-line13
+-line14
+-line15
++NEW_A
++NEW_B
+ line16
+ line17
+ line18
+`,
+			minGap:     3,
+			totalLines: 29,
+			want: []FoldableRange{
+				{StartLine: 1, EndLine: 9, InsertAt: -1, LineCount: 9, ID: "fold-top-1-9"},
+				{StartLine: 18, EndLine: 29, InsertAt: -2, LineCount: 12, ID: "fold-bottom-18-29"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectFoldableRanges(tt.diffText, tt.minGap, tt.totalLines)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ranges count: got %d %+v, want %d %+v", len(got), got, len(tt.want), tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("range[%d]: got %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateLineNumber(t *testing.T) {
 	tests := []struct {
 		name       string

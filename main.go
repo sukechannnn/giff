@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	dbg "runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/gdamore/tcell/v2"
@@ -47,10 +49,12 @@ func main() {
 	util.CreateShellSnapshot()
 	defer util.CleanupShellSnapshot()
 
-	// Detect the Git repository root
-	repoPath, err := git.FindGitRoot(".")
-	if err != nil {
-		log.Fatalf("Git repository not found: %v", err)
+	// Detect the Git repository root. Missing repo is only fatal if the user
+	// did not also pass a file path to open directly — external paths can be
+	// viewed without a surrounding git repo.
+	repoPath, repoErr := git.FindGitRoot(".")
+	if repoErr != nil && flag.NArg() == 0 {
+		log.Fatalf("Git repository not found: %v", repoErr)
 	}
 
 	// Load configuration
@@ -99,10 +103,51 @@ func main() {
 		return event // Process other events normally
 	})
 
-	// Get files with changes
-	stagedFiles, modifiedFiles, untrackedFiles, err := git.GetChangedFiles(repoPath)
-	if err != nil {
-		log.Fatalf("Failed to get modified files: %v", err)
+	// Get files with changes. Skip entirely if no repo was found — we only
+	// reach this point when an external file argument was supplied.
+	var stagedFiles, modifiedFiles, untrackedFiles []git.FileInfo
+	if repoErr == nil {
+		var err error
+		stagedFiles, modifiedFiles, untrackedFiles, err = git.GetChangedFiles(repoPath)
+		if err != nil {
+			log.Fatalf("Failed to get modified files: %v", err)
+		}
+	}
+
+	// Resolve an optional file argument. A path inside the repo with pending
+	// changes opens in diff view; anything else (outside the repo, untouched
+	// in-repo files, or any file when no repo is present) opens in file view.
+	var initialFile, externalFile string
+	if args := flag.Args(); len(args) > 0 {
+		abs, err := filepath.Abs(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "giff: %v\n", err)
+			os.Exit(1)
+		}
+		if _, err := os.Stat(abs); err != nil {
+			fmt.Fprintf(os.Stderr, "giff: %v\n", err)
+			os.Exit(1)
+		}
+
+		if repoErr == nil {
+			rel, relErr := filepath.Rel(repoPath, abs)
+			if relErr == nil {
+				rel = filepath.ToSlash(rel)
+				if rel != ".." && !strings.HasPrefix(rel, "../") &&
+					fileInChangedList(rel, stagedFiles, modifiedFiles, untrackedFiles) {
+					initialFile = rel
+				}
+			}
+		}
+		if initialFile == "" {
+			externalFile = abs
+		}
+	}
+
+	// Without a real repo, fall back to the external file's parent so that
+	// UI components expecting a non-empty repoRoot still get a valid value.
+	if repoErr != nil {
+		repoPath = filepath.Dir(externalFile)
 	}
 
 	// Define file selection handler (defined as a function for recursive use)
@@ -122,17 +167,30 @@ func main() {
 			giffApp.Config.PatchFilePath,
 			updateFileList,
 			autoRefresh,
+			"",
+			"",
 		)
 		giffApp.App.SetRoot(rootEditor, true)
 	}
 
 	// Create the initial view (file list) and set it as root
 	// The onSelect parameter is currently unused, so nil is passed
-	initialView := ui.RootEditor(giffApp.App, stagedFiles, modifiedFiles, untrackedFiles, repoPath, giffApp.Config.PatchFilePath, updateFileList, autoRefresh)
+	initialView := ui.RootEditor(giffApp.App, stagedFiles, modifiedFiles, untrackedFiles, repoPath, giffApp.Config.PatchFilePath, updateFileList, autoRefresh, initialFile, externalFile)
 	giffApp.App.SetRoot(initialView, true)
 
 	// Run the application only once in main
 	if err := giffApp.App.Run(); err != nil {
 		log.Fatalf("Error running application: %v", err)
 	}
+}
+
+func fileInChangedList(path string, lists ...[]git.FileInfo) bool {
+	for _, list := range lists {
+		for _, fi := range list {
+			if fi.Path == path {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -137,7 +137,9 @@ func buildFileTreeFromFileEntries(files []FileEntry) *TreeNode {
 	return root
 }
 
-// renderFileTreeForGitFiles renders the tree structure for git.FileInfo
+// renderFileTreeForGitFiles renders the tree structure for git.FileInfo.
+// stageStatusOverride (nullable) overrides the per-file StageStatus by path;
+// directories always use the section-level stageStatus.
 func renderFileTreeForGitFiles(
 	node *TreeNode,
 	depth int,
@@ -153,6 +155,7 @@ func renderFileTreeForGitFiles(
 	fileInfos []git.FileInfo,
 	collapseState *DirCollapseState,
 	statusMap map[string]string,
+	stageStatusOverride map[string]string,
 ) {
 	// Sort children for consistent ordering
 	var sortedKeys []string
@@ -196,10 +199,16 @@ func renderFileTreeForGitFiles(
 		if child.IsFile {
 			// File node
 			regionID := fmt.Sprintf("file-%d", *regionIndex)
+			entryStage := stageStatus
+			if stageStatusOverride != nil {
+				if ov, ok := stageStatusOverride[child.FullPath]; ok {
+					entryStage = ov
+				}
+			}
 			*fileList = append(*fileList, FileEntry{
 				ID:          regionID,
 				Path:        child.FullPath,
-				StageStatus: stageStatus,
+				StageStatus: entryStage,
 			})
 
 			// Add status decoration to filename
@@ -249,7 +258,7 @@ func renderFileTreeForGitFiles(
 			// Only render children if not collapsed
 			if !collapsed {
 				renderFileTreeForGitFiles(child, depth+1, childPrefix, sb, fileList,
-					stageStatus, regionIndex, currentSelection, focusedPane, lineNumberMap, currentLine, fileInfos, collapseState, statusMap)
+					stageStatus, regionIndex, currentSelection, focusedPane, lineNumberMap, currentLine, fileInfos, collapseState, statusMap, stageStatusOverride)
 			}
 		}
 	}

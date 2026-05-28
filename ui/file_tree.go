@@ -14,8 +14,8 @@ import (
 	"github.com/sukechannnn/giff/ui/commands"
 )
 
-// moveFileListSelection moves the file list selection.
-// If currently on a directory, moves between directories. If on a file, moves between files.
+// moveFileListSelection moves the file list selection linearly through all visible entries
+// (both files and directories). moveFileListToFile moves only between files.
 // matchesFilter checks if a file entry matches the current filter query
 // expandBraces expands a glob pattern with {a,b,c} into multiple patterns.
 // e.g. "*.{ts,tsx}" -> ["*.ts", "*.tsx"]
@@ -121,47 +121,187 @@ func moveFileListSelection(ctx *FileListKeyContext, direction int) {
 	if *ctx.currentSelection < 0 || *ctx.currentSelection >= len(*ctx.fileList) {
 		return
 	}
-	onDirectory := (*ctx.fileList)[*ctx.currentSelection].IsDirectory
 
 	next := *ctx.currentSelection + direction
 	for next >= 0 && next < len(*ctx.fileList) {
 		entry := (*ctx.fileList)[next]
-		if entry.IsDirectory == onDirectory {
-			// Skip entries that don't match filter
-			if *ctx.filterQuery != "" && !matchesFilter(entry, *ctx.filterQuery) {
-				next += direction
-				continue
-			}
-			*ctx.currentSelection = next
-			ctx.updateFileListView()
-			if !onDirectory {
-				// Debounce diff update: cancel previous timer and start new one
-				if ctx.diffDebounceTimer != nil {
-					ctx.diffDebounceTimer.Stop()
-				}
-				ctx.diffDebounceTimer = time.AfterFunc(80*time.Millisecond, func() {
-					ctx.app.QueueUpdateDraw(func() {
-						ctx.updateSelectedFileDiff()
-					})
-				})
-			}
-			return
+		// Skip files that don't match the filter. Directories are already filtered at build time.
+		if *ctx.filterQuery != "" && !entry.IsDirectory && !matchesFilter(entry, *ctx.filterQuery) {
+			next += direction
+			continue
 		}
-		next += direction
+		*ctx.currentSelection = next
+		ctx.updateFileListView()
+		if !entry.IsDirectory {
+			if ctx.diffDebounceTimer != nil {
+				ctx.diffDebounceTimer.Stop()
+			}
+			ctx.diffDebounceTimer = time.AfterFunc(80*time.Millisecond, func() {
+				ctx.app.QueueUpdateDraw(func() {
+					ctx.updateSelectedFileDiff()
+				})
+			})
+		}
+		return
 	}
 
-	// If moving up on a file and no more files found, scroll to top
-	if !onDirectory && direction < 0 {
+	if direction < 0 {
 		ctx.fileListView.ScrollTo(0, 0)
 	}
+}
+
+// jumpFileListSelection moves the selection to the first file (toTop=true)
+// or the last file (toTop=false), skipping directories and entries that do
+// not match the active filter.
+func jumpFileListSelection(ctx *FileListKeyContext, toTop bool) {
+	if len(*ctx.fileList) == 0 {
+		return
+	}
+	step := 1
+	start := 0
+	if !toTop {
+		step = -1
+		start = len(*ctx.fileList) - 1
+	}
+	for i := start; i >= 0 && i < len(*ctx.fileList); i += step {
+		entry := (*ctx.fileList)[i]
+		if entry.IsDirectory {
+			continue
+		}
+		if *ctx.filterQuery != "" && !matchesFilter(entry, *ctx.filterQuery) {
+			continue
+		}
+		*ctx.currentSelection = i
+		ctx.updateFileListView()
+		ctx.updateSelectedFileDiff()
+		return
+	}
+}
+
+// moveFileListToFile moves the selection to the next/previous file, skipping directories.
+// If the current entry is a directory, this jumps to the nearest file in the given direction
+// (which is the directory's first child when it is expanded).
+func moveFileListToFile(ctx *FileListKeyContext, direction int) {
+	if *ctx.currentSelection < 0 || *ctx.currentSelection >= len(*ctx.fileList) {
+		return
+	}
+
+	next := *ctx.currentSelection + direction
+	for next >= 0 && next < len(*ctx.fileList) {
+		entry := (*ctx.fileList)[next]
+		if entry.IsDirectory {
+			next += direction
+			continue
+		}
+		if *ctx.filterQuery != "" && !matchesFilter(entry, *ctx.filterQuery) {
+			next += direction
+			continue
+		}
+		*ctx.currentSelection = next
+		ctx.updateFileListView()
+		if ctx.diffDebounceTimer != nil {
+			ctx.diffDebounceTimer.Stop()
+		}
+		ctx.diffDebounceTimer = time.AfterFunc(80*time.Millisecond, func() {
+			ctx.app.QueueUpdateDraw(func() {
+				ctx.updateSelectedFileDiff()
+			})
+		})
+		return
+	}
+}
+
+// filterInputStatusText renders the filter input shown in the status bar with
+// a block cursor at the given rune position so users can see where editing
+// applies. If the cursor is at the end, a trailing reverse-video space is
+// appended; otherwise the character under the cursor is highlighted.
+func filterInputStatusText(input string, cursor int) string {
+	runes := []rune(input)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	if cursor == len(runes) {
+		return fmt.Sprintf("[white]/%s[::r] [::-]", tview.Escape(input))
+	}
+	before := tview.Escape(string(runes[:cursor]))
+	onCursor := tview.Escape(string(runes[cursor : cursor+1]))
+	after := tview.Escape(string(runes[cursor+1:]))
+	return fmt.Sprintf("[white]/%s[::r]%s[::-]%s", before, onCursor, after)
+}
+
+// applyUndoRedoInFileList applies the given undo/redo action and refreshes the
+// file list and selected diff to reflect the restored index state.
+func applyUndoRedoInFileList(ctx *FileListKeyContext, action func() (string, error), verb string) {
+	if ctx.undoStack == nil {
+		return
+	}
+	desc, err := action()
+	if err != nil {
+		if ctx.updateGlobalStatus != nil {
+			ctx.updateGlobalStatus(fmt.Sprintf("Nothing to %s", verb), "yellow")
+		}
+		return
+	}
+
+	// Remember current selection by path so we can restore it after refresh
+	var selectedPath, selectedStatus string
+	selectedIsDir := false
+	if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
+		entry := (*ctx.fileList)[*ctx.currentSelection]
+		selectedPath = entry.Path
+		selectedStatus = entry.StageStatus
+		selectedIsDir = entry.IsDirectory
+	}
+
+	ctx.refreshFileList()
+	ctx.updateFileListView()
+
+	if selectedPath != "" {
+		for i, fe := range *ctx.fileList {
+			if fe.Path == selectedPath && fe.IsDirectory == selectedIsDir && fe.StageStatus == selectedStatus {
+				*ctx.currentSelection = i
+				break
+			}
+		}
+		if *ctx.currentSelection >= len(*ctx.fileList) {
+			*ctx.currentSelection = len(*ctx.fileList) - 1
+		}
+		if *ctx.currentSelection < 0 {
+			*ctx.currentSelection = 0
+		}
+		ctx.updateFileListView()
+	}
+	ctx.updateSelectedFileDiff()
+
+	if ctx.updateGlobalStatus != nil {
+		label := "Undone"
+		if verb == "redo" {
+			label = "Redone"
+		}
+		ctx.updateGlobalStatus(fmt.Sprintf("%s: %s", label, desc), "forestgreen")
+	}
+}
+
+// stageStatusGroup maps a StageStatus to its display section group so that
+// untracked entries (which now share a section with unstaged entries) match
+// against unstaged directory entries for parent/collapse lookups.
+func stageStatusGroup(stage string) string {
+	if stage == "untracked" {
+		return "unstaged"
+	}
+	return stage
 }
 
 // findParentDirectory finds the parent directory entry for the given entry
 func findParentDirectory(fileList *[]FileEntry, currentIdx int) int {
 	entry := (*fileList)[currentIdx]
+	entryGroup := stageStatusGroup(entry.StageStatus)
 	for i := currentIdx - 1; i >= 0; i-- {
 		candidate := (*fileList)[i]
-		if candidate.IsDirectory && candidate.StageStatus == entry.StageStatus &&
+		if candidate.IsDirectory && stageStatusGroup(candidate.StageStatus) == entryGroup &&
 			strings.HasPrefix(entry.Path, candidate.Path+"/") {
 			return i
 		}
@@ -249,6 +389,7 @@ func renderFileTree(
 		fileInfos,
 		collapseState,
 		statusMap,
+		nil,
 	)
 }
 
@@ -302,24 +443,32 @@ func BuildFileListContent(
 		currentLine++
 	}
 
-	// Modified files (unstaged)
-	if len(filteredModified) > 0 {
+	// Unstaged files (modified + untracked rendered as a single tree)
+	if len(filteredModified) > 0 || len(filteredUntracked) > 0 {
 		coloredContent.WriteString("[yellow]Changes not staged for commit:[white]\n")
 		currentLine++
-		tree := buildFileTree(filteredModified)
-		renderFileTree(tree, 1, &coloredContent, fileList,
-			"unstaged", &regionIndex, currentSelection, focusedPane, lineNumberMap, &currentLine, filteredModified, collapseState)
-		coloredContent.WriteString("\n")
-		currentLine++
-	}
 
-	// Untracked files
-	if len(filteredUntracked) > 0 {
-		coloredContent.WriteString("[red]Untracked files:[white]\n")
-		currentLine++
-		tree := buildFileTree(filteredUntracked)
-		renderFileTree(tree, 1, &coloredContent, fileList,
-			"untracked", &regionIndex, currentSelection, focusedPane, lineNumberMap, &currentLine, filteredUntracked, collapseState)
+		combined := make([]git.FileInfo, 0, len(filteredModified)+len(filteredUntracked))
+		combined = append(combined, filteredModified...)
+		combined = append(combined, filteredUntracked...)
+
+		statusMap := make(map[string]string, len(combined))
+		for _, fi := range combined {
+			statusMap[fi.Path] = fi.ChangeStatus
+		}
+
+		// Override per-file StageStatus so untracked files keep "untracked"
+		// semantics for behavior (diff rendering, discard action) while sharing
+		// the same section/tree as unstaged files.
+		stageOverride := make(map[string]string, len(filteredUntracked))
+		for _, fi := range filteredUntracked {
+			stageOverride[fi.Path] = "untracked"
+		}
+
+		tree := buildFileTree(combined)
+		renderFileTreeForGitFiles(tree, 1, "", &coloredContent, fileList,
+			"unstaged", &regionIndex, currentSelection, focusedPane,
+			lineNumberMap, &currentLine, combined, collapseState, statusMap, stageOverride)
 	}
 
 	return coloredContent.String()
@@ -413,7 +562,7 @@ func BuildFileListContentForBrowser(
 	renderFileTreeForGitFiles(
 		tree, 0, "", &content, fileList,
 		"browser", &regionIndex, currentSelection, focusedPane,
-		lineNumberMap, &currentLine, filtered, collapseState, statusMap,
+		lineNumberMap, &currentLine, filtered, collapseState, statusMap, nil,
 	)
 
 	return content.String()
@@ -458,6 +607,9 @@ type FileListKeyContext struct {
 	// Diff view context
 	diffViewContext *DiffViewContext
 
+	// Undo stack for staging operations (nil in read-only mode)
+	undoStack *UndoStack
+
 	// Debounce timer for diff updates
 	diffDebounceTimer *time.Timer
 
@@ -467,7 +619,12 @@ type FileListKeyContext struct {
 	// File filter state
 	isFilterMode *bool
 	filterInput  string
+	filterCursor int    // rune-index cursor position inside filterInput
 	filterQuery  *string // active filter (empty = no filter)
+
+	// Key handling state for gg chord
+	gPressed  *bool
+	lastGTime *time.Time
 
 	// Callbacks
 	updateFileListView     func()
@@ -542,44 +699,110 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 	ctx.fileListView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Filter mode input handling
 		if *ctx.isFilterMode {
+			runes := []rune(ctx.filterInput)
+			if ctx.filterCursor < 0 {
+				ctx.filterCursor = 0
+			}
+			if ctx.filterCursor > len(runes) {
+				ctx.filterCursor = len(runes)
+			}
+
+			redrawStatus := func() {
+				if ctx.setGlobalStatusText != nil {
+					ctx.setGlobalStatusText(filterInputStatusText(ctx.filterInput, ctx.filterCursor))
+				}
+			}
+
 			switch event.Key() {
 			case tcell.KeyEnter:
-				// Confirm filter and apply
 				*ctx.isFilterMode = false
 				applyFileFilter(ctx)
 			case tcell.KeyEsc:
-				// Cancel filter
 				*ctx.isFilterMode = false
 				ctx.filterInput = ""
+				ctx.filterCursor = 0
 				*ctx.filterQuery = ""
 				ctx.updateFileListView()
 				if ctx.setGlobalStatusText != nil {
 					ctx.setGlobalStatusText(fileListKeyMessage)
 				}
 			case tcell.KeyBackspace, tcell.KeyBackspace2:
-				if len(ctx.filterInput) > 0 {
-					runes := []rune(ctx.filterInput)
-					ctx.filterInput = string(runes[:len(runes)-1])
+				if ctx.filterCursor > 0 {
+					ctx.filterInput = string(runes[:ctx.filterCursor-1]) + string(runes[ctx.filterCursor:])
+					ctx.filterCursor--
 				}
-				if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s[-]", tview.Escape(ctx.filterInput)))
+				redrawStatus()
+			case tcell.KeyDelete:
+				if ctx.filterCursor < len(runes) {
+					ctx.filterInput = string(runes[:ctx.filterCursor]) + string(runes[ctx.filterCursor+1:])
 				}
+				redrawStatus()
+			case tcell.KeyLeft, tcell.KeyCtrlB:
+				if ctx.filterCursor > 0 {
+					ctx.filterCursor--
+				}
+				redrawStatus()
+			case tcell.KeyRight, tcell.KeyCtrlF:
+				if ctx.filterCursor < len(runes) {
+					ctx.filterCursor++
+				}
+				redrawStatus()
+			case tcell.KeyHome, tcell.KeyCtrlA:
+				ctx.filterCursor = 0
+				redrawStatus()
+			case tcell.KeyEnd, tcell.KeyCtrlE:
+				ctx.filterCursor = len(runes)
+				redrawStatus()
+			case tcell.KeyCtrlU:
+				// Clear to beginning of line
+				ctx.filterInput = string(runes[ctx.filterCursor:])
+				ctx.filterCursor = 0
+				redrawStatus()
+			case tcell.KeyCtrlK:
+				// Clear to end of line
+				ctx.filterInput = string(runes[:ctx.filterCursor])
+				redrawStatus()
 			case tcell.KeyRune:
-				ctx.filterInput += string(event.Rune())
-				if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s[-]", tview.Escape(ctx.filterInput)))
-				}
+				r := event.Rune()
+				ctx.filterInput = string(runes[:ctx.filterCursor]) + string(r) + string(runes[ctx.filterCursor:])
+				ctx.filterCursor++
+				redrawStatus()
 			}
 			return nil
 		}
 
 		switch event.Key() {
 		case tcell.KeyEsc:
-			// If filter is active, clear it first
+			// If filter is active, clear it first but keep the cursor on the
+			// currently selected entry so users don't lose their place.
 			if *ctx.filterQuery != "" {
+				var selectedPath, selectedStatus string
+				selectedIsDir := false
+				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
+					entry := (*ctx.fileList)[*ctx.currentSelection]
+					selectedPath = entry.Path
+					selectedStatus = entry.StageStatus
+					selectedIsDir = entry.IsDirectory
+				}
+
 				*ctx.filterQuery = ""
 				ctx.filterInput = ""
-				*ctx.currentSelection = 0
+				ctx.filterCursor = 0
+				ctx.updateFileListView()
+
+				newSel := -1
+				if selectedPath != "" {
+					for i, fe := range *ctx.fileList {
+						if fe.Path == selectedPath && fe.IsDirectory == selectedIsDir && fe.StageStatus == selectedStatus {
+							newSel = i
+							break
+						}
+					}
+				}
+				if newSel < 0 {
+					newSel = 0
+				}
+				*ctx.currentSelection = newSel
 				ctx.updateFileListView()
 				ctx.updateSelectedFileDiff()
 				if ctx.setGlobalStatusText != nil {
@@ -603,6 +826,12 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			return nil
 		case tcell.KeyRight:
 			handleFileListRight(ctx)
+			return nil
+		case tcell.KeyTab:
+			moveFileListToFile(ctx, 1)
+			return nil
+		case tcell.KeyBacktab:
+			moveFileListToFile(ctx, -1)
 			return nil
 		case tcell.KeyEnter:
 			if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
@@ -710,10 +939,17 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			})
 			ctx.app.SetRoot(gitLogView.GetView(), true)
 			return nil
+		case tcell.KeyCtrlR:
+			if ctx.readOnly {
+				return nil
+			}
+			applyUndoRedoInFileList(ctx, ctx.undoStack.Redo, "redo")
+			return nil
 		case tcell.KeyCtrlA:
 			if ctx.readOnly {
 				return nil
 			}
+			snapshot, _ := ctx.undoStack.CaptureSnapshot()
 			cmd := exec.Command("git", "-c", "core.quotepath=false", "add", "--all")
 			cmd.Dir = ctx.repoRoot
 			if err := cmd.Run(); err != nil {
@@ -722,6 +958,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				}
 				return nil
 			}
+			ctx.undoStack.Push(snapshot, "stage all")
 
 			ctx.refreshFileList()
 			ctx.updateFileListView()
@@ -744,6 +981,31 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 'j':
 				moveFileListSelection(ctx, 1)
 				return nil
+			case 'u':
+				if ctx.readOnly {
+					return nil
+				}
+				applyUndoRedoInFileList(ctx, ctx.undoStack.Undo, "undo")
+				return nil
+			case 'g':
+				now := time.Now()
+				if ctx.gPressed != nil && *ctx.gPressed && ctx.lastGTime != nil && now.Sub(*ctx.lastGTime) < 500*time.Millisecond {
+					jumpFileListSelection(ctx, true)
+					if ctx.gPressed != nil {
+						*ctx.gPressed = false
+					}
+				} else {
+					if ctx.gPressed != nil {
+						*ctx.gPressed = true
+					}
+					if ctx.lastGTime != nil {
+						*ctx.lastGTime = now
+					}
+				}
+				return nil
+			case 'G':
+				jumpFileListSelection(ctx, false)
+				return nil
 			case 'H':
 				handleFileListLeft(ctx)
 				return nil
@@ -759,35 +1021,6 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 'l': // Scroll file list right
 				row, col := ctx.fileListView.GetScrollOffset()
 				ctx.fileListView.ScrollTo(row, col+4)
-				return nil
-			case 'J': // Toggle between directory and file: on file -> next dir, on dir -> next file
-				onDir := (*ctx.fileList)[*ctx.currentSelection].IsDirectory
-				for i := *ctx.currentSelection + 1; i < len(*ctx.fileList); i++ {
-					if (*ctx.fileList)[i].IsDirectory != onDir {
-						*ctx.currentSelection = i
-						ctx.updateFileListView()
-						if !(*ctx.fileList)[i].IsDirectory {
-							if ctx.diffDebounceTimer != nil {
-								ctx.diffDebounceTimer.Stop()
-							}
-							ctx.diffDebounceTimer = time.AfterFunc(80*time.Millisecond, func() {
-								ctx.app.QueueUpdateDraw(func() {
-									ctx.updateSelectedFileDiff()
-								})
-							})
-						}
-						break
-					}
-				}
-				return nil
-			case 'K': // Move to previous directory
-				for i := *ctx.currentSelection - 1; i >= 0; i-- {
-					if (*ctx.fileList)[i].IsDirectory {
-						*ctx.currentSelection = i
-						ctx.updateFileListView()
-						break
-					}
-				}
 				return nil
 			case 's':
 				// Toggle split view
@@ -844,9 +1077,10 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				// Start file filter mode
 				*ctx.isFilterMode = true
 				ctx.filterInput = ""
+				ctx.filterCursor = 0
 				ctx.updateFileListView() // Redraw without cursor highlight
 				if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText("[white]/[-]")
+					ctx.setGlobalStatusText(filterInputStatusText(ctx.filterInput, ctx.filterCursor))
 				}
 				return nil
 			case 'w':
@@ -898,6 +1132,8 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 						file = fileEntry.Path + "/"
 					}
 
+					snapshot, _ := ctx.undoStack.CaptureSnapshot()
+
 					var cmd *exec.Cmd
 					if status == "staged" {
 						// Unstage the staged file
@@ -936,6 +1172,12 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 						}
 						return nil
 					}
+
+					desc := "stage " + file
+					if status == "staged" {
+						desc = "unstage " + file
+					}
+					ctx.undoStack.Push(snapshot, desc)
 
 					// Save current scroll position
 					currentRow, _ := ctx.fileListView.GetScrollOffset()
@@ -1113,7 +1355,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					ctx.updateSelectedFileDiff()
 				}
 				return nil
-			case 'c': // 'c' to open file in VSCode
+			case 'c', 'n': // 'c' or 'n' to open file in VSCode
 				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
 					fileEntry := (*ctx.fileList)[*ctx.currentSelection]
 					if fileEntry.IsDirectory {
