@@ -29,10 +29,12 @@ homebrew_casks:
     homepage: "https://github.com/sukechannnn/giff"
     description: "A terminal-based Git diff viewer with real-time updates"
     license: "MIT"
-    install: |
-      bin.install "giff"
-    test: |
-      system "#{bin}/giff", "-v"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/giff"]
+          end
 
 changelog:
   sort: asc
