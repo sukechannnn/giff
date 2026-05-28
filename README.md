@@ -17,7 +17,7 @@ English | [日本語](./README.ja.md)
 **homebrew:**
 
 ```console
-$ brew install sukechannnn/tap/giff
+$ brew install --cask sukechannnn/tap/giff
 ```
 
 **go install:**

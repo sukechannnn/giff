@@ -15,7 +15,7 @@
 **homebrew:**
 
 ```console
-$ brew install sukechannnn/tap/giff
+$ brew install --cask sukechannnn/tap/giff
 ```
 
 **go install:**
