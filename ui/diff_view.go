@@ -992,14 +992,24 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						// Call refreshFileList to get the latest state
 						ctx.refreshFileList()
 
-						// Save cursor position
-						// Set to always select the first item in the unstaged section
-						*ctx.preferUnstagedSection = true
-						*ctx.savedTargetFile = ""
+						// Redraw file list and keep selection on the same file under
+						// its new status. Doing this in-place (instead of calling
+						// onUpdate, which rebuilds the whole UI) preserves focus on
+						// the diff view so subsequent keys still hit it.
+						ctx.updateFileListView()
 
-						// Update file list
-						if ctx.onUpdate != nil {
-							ctx.onUpdate()
+						newSelection := -1
+						for i, fileEntry := range *ctx.fileList {
+							if !fileEntry.IsDirectory &&
+								fileEntry.Path == *ctx.currentFile &&
+								fileEntry.StageStatus == *ctx.currentStatus {
+								newSelection = i
+								break
+							}
+						}
+						if newSelection >= 0 {
+							*ctx.currentSelection = newSelection
+							ctx.updateFileListView()
 						}
 					} else {
 						// Error case
