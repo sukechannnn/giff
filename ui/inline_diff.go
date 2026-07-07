@@ -12,6 +12,7 @@ import (
 func computeInlineDiffMasks(oldPlain, newPlain string) (delMask []bool, addMask []bool) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain(oldPlain, newPlain, false)
+	diffs = dmp.DiffCleanupSemantic(diffs)
 
 	delMask = make([]bool, len([]rune(oldPlain)))
 	addMask = make([]bool, len([]rune(newPlain)))
@@ -41,7 +42,22 @@ func computeInlineDiffMasks(oldPlain, newPlain string) (delMask []bool, addMask 
 		}
 	}
 
+	fillSingleCharGaps(delMask)
+	fillSingleCharGaps(addMask)
+
 	return delMask, addMask
+}
+
+// fillSingleCharGaps absorbs unchanged runs of a single character sandwiched
+// between changed runs (e.g. the '.' in "foo.bar" when both "foo" and "bar"
+// changed), so highlights render as one continuous block instead of
+// fragmented segments.
+func fillSingleCharGaps(mask []bool) {
+	for i := 1; i < len(mask)-1; i++ {
+		if !mask[i] && mask[i-1] && mask[i+1] {
+			mask[i] = true
+		}
+	}
 }
 
 // computeAllInlineMasks computes inline diff masks for all lines.

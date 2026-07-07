@@ -268,10 +268,10 @@ index 123..456 789
 			},
 			// Pairing logic: deletion and addition lines are displayed on the same row
 			wantBefore: []string{
-				"[#E7454E:#3A0000]-[-:-][#E7454E:#3A0000]var foo [i[-:-][#E7454E:#5C1A1A]n[-:-][#E7454E:#3A0000]t]string[-:-]",
+				"[#E7454E:#3A0000]-[-:-][#E7454E:#3A0000]var foo [[-:-][#E7454E:#5C1A1A]int[-:-][#E7454E:#3A0000]]string[-:-]",
 			},
 			wantAfter: []string{
-				"[#00AC37:#002500]+[-:-][#00AC37:#002500]var foo [[-:-][#00AC37:#1A4D1A]wh[-:-][#00AC37:#002500]it[-:-][#00AC37:#1A4D1A]e[-:-][#00AC37:#002500]]string[-:-]",
+				"[#00AC37:#002500]+[-:-][#00AC37:#002500]var foo [[-:-][#00AC37:#1A4D1A]white[-:-][#00AC37:#002500]]string[-:-]",
 			},
 			wantBeforeNums: []string{
 				"1",
