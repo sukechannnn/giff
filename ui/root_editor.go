@@ -54,14 +54,26 @@ func updateCurrentDiffText(filePath string, status string, repoRoot string, curr
 	case "staged":
 		diffText, err = git.GetStagedDiffWithOptions(filePath, repoRoot, ignoreWhitespace)
 	case "untracked":
-		content, readErr := util.ReadFileContent(filePath, repoRoot)
-		if readErr != nil {
-			err = readErr
+		isBinary, binErr := util.IsBinaryFile(filePath, repoRoot)
+		if binErr != nil {
+			err = binErr
+		} else if isBinary {
+			diffText = util.FormatBinaryNotice(filePath)
 		} else {
-			diffText = util.FormatAsAddedLines(content, filePath)
+			content, readErr := util.ReadFileContent(filePath, repoRoot)
+			if readErr != nil {
+				err = readErr
+			} else {
+				diffText = util.FormatAsAddedLines(content, filePath)
+			}
 		}
 	default:
 		diffText, err = git.GetFileDiffWithOptions(filePath, repoRoot, ignoreWhitespace)
+	}
+
+	// Show only a notice for binary files instead of git's raw binary diff output
+	if err == nil && util.IsBinaryDiff(diffText) {
+		diffText = util.FormatBinaryNotice(filePath)
 	}
 
 	if err != nil {
@@ -474,7 +486,15 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				return
 			}
 			currentFile = entry.Path
-			content, err := util.ReadFileContent(entry.Path, browserRoot)
+			var content string
+			isBinary, err := util.IsBinaryFile(entry.Path, browserRoot)
+			if err == nil {
+				if isBinary {
+					content = util.FormatBinaryNotice(entry.Path)
+				} else {
+					content, err = util.ReadFileContent(entry.Path, browserRoot)
+				}
+			}
 			if err != nil {
 				diffView.SetText("[red]Error reading file: " + err.Error() + "[-]")
 				currentDiffText = ""
@@ -919,16 +939,9 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 					var currentFileDiffChanged bool = false
 					var newDiffText string
 					if currentFile != "" {
-						if currentStatus == "staged" {
-							newDiffText, _ = git.GetStagedDiffWithOptions(currentFile, repoRoot, ignoreWhitespace)
-						} else if currentStatus == "untracked" {
-							content, readErr := util.ReadFileContent(currentFile, repoRoot)
-							if readErr == nil {
-								newDiffText = util.FormatAsAddedLines(content, currentFile)
-							}
-						} else {
-							newDiffText, _ = git.GetFileDiffWithOptions(currentFile, repoRoot, ignoreWhitespace)
-						}
+						// Use the same retrieval logic as the main path so
+						// transformations (e.g. binary file notice) match
+						updateCurrentDiffText(currentFile, currentStatus, repoRoot, &newDiffText, ignoreWhitespace)
 						currentFileDiffChanged = (newDiffText != currentDiffText)
 					}
 
@@ -1223,17 +1236,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 					return nil
 				}
 
-				if isAmendMode {
-					updateGlobalStatus("Successfully amended commit", "forestgreen")
-				} else {
-					updateGlobalStatus("Successfully committed", "forestgreen")
-				}
 				// Update file list after commit
 				refreshFileList()
-
-				// Adjust selection position after file list is updated
-				// Call updateFileListView to rebuild fileList
-				updateFileListView()
 
 				// Move cursor to the first file after commit
 				currentSelection = findFirstFileIndex(0)
@@ -1243,6 +1247,12 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				updateSelectedFileDiff()
 
 				exitCommitMode()
+
+				if isAmendMode {
+					updateGlobalStatus("Successfully amended commit", "forestgreen")
+				} else {
+					updateGlobalStatus("Successfully committed", "forestgreen")
+				}
 				return nil
 			}
 			// Normal Enter is handled as newline

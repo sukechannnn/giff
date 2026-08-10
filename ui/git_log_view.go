@@ -411,6 +411,9 @@ func (glv *GitLogView) showCommitDetails() {
 			return
 		}
 		*out = strings.TrimLeft(string(output), "\n")
+		if util.IsBinaryDiff(*out) {
+			*out = util.FormatBinaryNotice(filePath)
+		}
 	}
 
 	// Build file list

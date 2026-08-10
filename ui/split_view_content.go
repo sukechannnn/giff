@@ -9,6 +9,9 @@ import (
 	"github.com/sukechannnn/giff/util"
 )
 
+// splitPlaceholderLine is the filler rendered when one side of a split row has no content
+const splitPlaceholderLine = "[dimgray] [-]"
+
 // SplitViewContent represents the content for split view
 type SplitViewContent struct {
 	BeforeLines    []string
@@ -32,6 +35,23 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 
 	// Calculate max digits for line numbers
 	maxDigits := calculateMaxLineNumberDigits(oldLineMap, newLineMap)
+
+	// A diff without any hunk (e.g. a binary file notice or a mode-only
+	// change) has no line-based content to pair; show its non-header
+	// lines as-is on both sides.
+	if !hasHunkHeader(lines) {
+		for _, line := range lines {
+			if line == "" || isHeaderLine(line) {
+				continue
+			}
+			escapedLine := tview.Escape(line)
+			content.BeforeLines = append(content.BeforeLines, " "+escapedLine)
+			content.AfterLines = append(content.AfterLines, " "+escapedLine)
+			content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
+			content.AfterLineNums = append(content.AfterLineNums, strings.Repeat(" ", maxDigits))
+		}
+		return content
+	}
 
 	// Pre-processing to pair deletion and addition lines
 	type diffLine struct {
@@ -186,7 +206,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 						beforeLineNum = strings.Repeat(" ", maxDigits)
 					}
 				} else {
-					beforeLine = "[dimgray] [-]"
+					beforeLine = splitPlaceholderLine
 					beforeLineNum = strings.Repeat(" ", maxDigits)
 				}
 
@@ -198,7 +218,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 						afterLineNum = strings.Repeat(" ", maxDigits)
 					}
 				} else {
-					afterLine = "[dimgray] [-]"
+					afterLine = splitPlaceholderLine
 					afterLineNum = strings.Repeat(" ", maxDigits)
 				}
 
@@ -211,7 +231,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 			i = j
 		case "+":
 			// Unpaired + line (addition without deletion)
-			content.BeforeLines = append(content.BeforeLines, "[dimgray] [-]")
+			content.BeforeLines = append(content.BeforeLines, splitPlaceholderLine)
 			content.AfterLines = append(content.AfterLines, renderLine(codeIdx, '+', util.AddedLineBg, util.AddedLineFg, nil, ""))
 
 			content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
@@ -262,6 +282,16 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 	}
 
 	return content
+}
+
+// hasHunkHeader reports whether the diff lines contain at least one hunk header
+func hasHunkHeader(lines []string) bool {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			return true
+		}
+	}
+	return false
 }
 
 // isHeaderLine checks if the line is a header line that should be hidden

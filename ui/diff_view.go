@@ -565,17 +565,20 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						}
 					}
 				} else {
-					lines := getSelectableDiffLines(*ctx.currentDiffText)
-					if start < 0 {
-						start = 0
-					}
-					if end >= len(lines) {
-						end = len(lines) - 1
-					}
-					if start < len(lines) {
-						for _, line := range lines[start : end+1] {
-							sanitized = append(sanitized, stripDiffPrefix(line))
+					content := getCachedSplitContent(*ctx.currentDiffText, *ctx.currentFile)
+					if content != nil && len(content.BeforeLines) > 0 {
+						if start < 0 {
+							start = 0
 						}
+						if end >= len(content.BeforeLines) {
+							end = len(content.BeforeLines) - 1
+						}
+						beforeLines, afterLines := extractSplitCopyLines(content, start, end)
+						sanitized = append(sanitized, beforeLines...)
+						if len(beforeLines) > 0 && len(afterLines) > 0 {
+							sanitized = append(sanitized, "")
+						}
+						sanitized = append(sanitized, afterLines...)
 					}
 				}
 
@@ -959,17 +962,20 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						}
 						ctx.undoStack.Push(snapshot, desc)
 
+						var newDiffText string
 						if *ctx.currentStatus == "staged" {
 							// Show diff of now-unstaged file
 							*ctx.currentStatus = "unstaged"
-							newDiffText, _ := git.GetFileDiff(*ctx.currentFile, ctx.repoRoot)
-							*ctx.currentDiffText = newDiffText
+							newDiffText, _ = git.GetFileDiff(*ctx.currentFile, ctx.repoRoot)
 						} else {
 							// Show diff of now-staged file
 							*ctx.currentStatus = "staged"
-							newDiffText, _ := git.GetStagedDiff(*ctx.currentFile, ctx.repoRoot)
-							*ctx.currentDiffText = newDiffText
+							newDiffText, _ = git.GetStagedDiff(*ctx.currentFile, ctx.repoRoot)
 						}
+						if util.IsBinaryDiff(newDiffText) {
+							newDiffText = util.FormatBinaryNotice(*ctx.currentFile)
+						}
+						*ctx.currentDiffText = newDiffText
 
 						// Reset cursor and selection
 						*ctx.isSelecting = false
@@ -1049,16 +1055,32 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 	ctx.splitViewFlex.SetInputCapture(keyHandler)
 }
 
-func getSelectableDiffLines(diffText string) []string {
-	rawLines := util.SplitLines(diffText)
-	visible := make([]string, 0, len(rawLines))
-	for _, line := range rawLines {
-		if isUnifiedHeaderLine(line) {
-			continue
+// extractSplitCopyLines collects plain-text before/after lines from split view
+// content for rows start..end, skipping placeholder rows that pad one side
+func extractSplitCopyLines(content *SplitViewContent, start, end int) (beforeLines, afterLines []string) {
+	for i := start; i <= end; i++ {
+		if content.BeforeLines[i] != splitPlaceholderLine {
+			beforeLines = append(beforeLines, stripSplitLinePrefix(stripTviewTags(content.BeforeLines[i])))
 		}
-		visible = append(visible, line)
+		if content.AfterLines[i] != splitPlaceholderLine {
+			afterLines = append(afterLines, stripSplitLinePrefix(stripTviewTags(content.AfterLines[i])))
+		}
 	}
-	return visible
+	return beforeLines, afterLines
+}
+
+// stripSplitLinePrefix removes the single-character diff prefix ('-', '+', or ' ')
+// that split view rendering prepends to every real line
+func stripSplitLinePrefix(line string) string {
+	if len(line) == 0 {
+		return line
+	}
+	switch line[0] {
+	case '+', '-', ' ':
+		return line[1:]
+	default:
+		return line
+	}
 }
 
 func stripDiffPrefix(line string) string {
