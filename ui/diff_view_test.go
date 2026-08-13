@@ -102,3 +102,83 @@ func TestStripSplitLinePrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestStripTviewTags(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "style tags are removed",
+			input: "[green]+added line[-]",
+			want:  "+added line",
+		},
+		{
+			name:  "fg:bg tag and reset tag are removed",
+			input: "[black:green]+[-:-]content",
+			want:  "+content",
+		},
+		{
+			name:  "hex color tags are removed",
+			input: "[dimgray:#3a3a3a] folded[-:-]",
+			want:  " folded",
+		},
+		{
+			name:  "shell test brackets are preserved",
+			input: `          if [ -n "$AFFECTED" ]; then`,
+			want:  `          if [ -n "$AFFECTED" ]; then`,
+		},
+		{
+			name:  "empty brackets are preserved",
+			input: "var s []string",
+			want:  "var s []string",
+		},
+		{
+			name:  "numeric index brackets are preserved",
+			input: "arr[0] = 1",
+			want:  "arr[0] = 1",
+		},
+		{
+			name:  "escaped tag is unescaped",
+			input: "arr[i[]",
+			want:  "arr[i]",
+		},
+		{
+			name:  "double-escaped tag drops one bracket",
+			input: "[xyz[[]",
+			want:  "[xyz[]",
+		},
+		{
+			name:  "region-like quoted brackets from escape are restored",
+			input: `d["key"[]`,
+			want:  `d["key"]`,
+		},
+		{
+			name:  "mixed tags and literal brackets",
+			input: `[green]+  if [ -n "$AFFECTED" ]; then[-]`,
+			want:  `+  if [ -n "$AFFECTED" ]; then`,
+		},
+		{
+			name:  "attribute tag is removed",
+			input: "[::b]bold[::-]",
+			want:  "bold",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripTviewTags(tt.input); got != tt.want {
+				t.Errorf("stripTviewTags(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHighlightSearchInTaggedTextPreservesLiteralBrackets(t *testing.T) {
+	tagged := `[green]+if [ -n "$AFFECTED" ]; then[-]`
+	got := highlightSearchInTaggedText(tagged, "AFFECTED")
+	if stripped := stripTviewTags(got); stripped != `+if [ -n "$AFFECTED" ]; then` {
+		t.Errorf("highlighted text lost literal brackets: %q (stripped %q)", got, stripped)
+	}
+}

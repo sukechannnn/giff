@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -81,8 +82,8 @@ type DiffViewContext struct {
 	onUpdate              func()
 	updateCurrentDiffText func(string, string, string, *string, bool)
 	updateStatusTitle     func()
-	onEsc                 func() // if non-nil, call this instead of returning to left pane on Esc
-	openTerminal          func() // if non-nil, opens terminal command input
+	onEsc                 func()          // if non-nil, call this instead of returning to left pane on Esc
+	openTerminal          func()          // if non-nil, opens terminal command input
 	resizeFileList        func(delta int) // resize file list width
 }
 
@@ -1095,12 +1096,50 @@ func stripDiffPrefix(line string) string {
 	}
 }
 
-// Regex to strip tview color tags
-var tviewTagRegex = regexp.MustCompile(`\[("[^"]*"|[^\[\]]*)\]`)
+// Regexes matching only what tview actually recognizes, so literal brackets in
+// code (e.g. shell's `[ -n "$VAR" ]` or Go's `[]string`) are left untouched.
+var (
+	// Style tag: [fg:bg:attrs:url] where fg/bg are a color name, #rrggbb, or
+	// "-", attrs are flag letters or "-", and every part is optional — but a
+	// bare "[]" is not a tag.
+	tviewStyleTagRegex = regexp.MustCompile(`^\[(?:(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)(?::(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)?(?::(?:-|[buildsrBUILDSR]+)?(?::[^\[\]]*)?)?)?|:(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)?(?::(?:-|[buildsrBUILDSR]+)?(?::[^\[\]]*)?)?)\]`)
+	// Region tag: ["name"]
+	tviewRegionTagRegex = regexp.MustCompile(`^\["[a-zA-Z0-9_,;: \-\.]*"\]`)
+	// Escaped tag produced by tview.Escape: "[xyz[]" is displayed as "[xyz]"
+	tviewEscapedTagRegex = regexp.MustCompile(`^\[[^\[\]]+\[+\]`)
+)
 
-// stripTviewTags removes tview color/region tags from text
+// matchTviewTag returns the style/region tag at the start of s, or "" if s does
+// not start with one
+func matchTviewTag(s string) string {
+	if m := tviewStyleTagRegex.FindString(s); m != "" {
+		return m
+	}
+	return tviewRegionTagRegex.FindString(s)
+}
+
+// stripTviewTags returns the text as tview displays it: style/region tags are
+// removed and escaped tags ("[xyz[]") are unescaped back to "[xyz]"
 func stripTviewTags(text string) string {
-	return tviewTagRegex.ReplaceAllString(text, "")
+	var b strings.Builder
+	for len(text) > 0 {
+		if text[0] == '[' {
+			if m := matchTviewTag(text); m != "" {
+				text = text[len(m):]
+				continue
+			}
+			if m := tviewEscapedTagRegex.FindString(text); m != "" {
+				// Drop one "[" from the closing run: "[xyz[]" -> "[xyz]"
+				b.WriteString(m[:len(m)-2])
+				b.WriteByte(']')
+				text = text[len(m):]
+				continue
+			}
+		}
+		b.WriteByte(text[0])
+		text = text[1:]
+	}
+	return b.String()
 }
 
 // highlightSearchInTaggedText highlights occurrences of query in a tview-tagged string
@@ -1151,41 +1190,52 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 	const hlEnd = "[:-]"
 
 	var result strings.Builder
-	runes := []rune(tagged)
+	rest := tagged
 	visibleIdx := 0
 	inHL := false
 
-	for i := 0; i < len(runes); {
-		// Detect tview tags
-		if runes[i] == '[' {
-			j := i + 1
-			inQuote := false
-			for j < len(runes) {
-				if runes[j] == '"' {
-					inQuote = !inQuote
-				} else if !inQuote && runes[j] == ']' {
-					break
-				} else if !inQuote && runes[j] == '[' {
-					break
-				}
-				j++
-			}
-			if j < len(runes) && runes[j] == ']' {
-				// Valid tag: if highlighting, re-apply around the tag
-				tagStr := string(runes[i : j+1])
+	for len(rest) > 0 {
+		if rest[0] == '[' {
+			// Style/region tag: invisible, if highlighting re-apply around it
+			if m := matchTviewTag(rest); m != "" {
 				if inHL {
 					result.WriteString(hlEnd)
-					result.WriteString(tagStr)
+					result.WriteString(m)
 					result.WriteString(hlStart)
 				} else {
-					result.WriteString(tagStr)
+					result.WriteString(m)
 				}
-				i = j + 1
+				rest = rest[len(m):]
+				continue
+			}
+			// Escaped tag "[xyz[]" displays as "[xyz]". Keep it intact (tags
+			// inserted inside would break the escape sequence) and highlight
+			// the whole unit if any of its visible characters match.
+			if m := tviewEscapedTagRegex.FindString(rest); m != "" {
+				visLen := utf8.RuneCountInString(m) - 1
+				shouldHL := false
+				for j := 0; j < visLen && visibleIdx+j < len(highlight); j++ {
+					if highlight[visibleIdx+j] {
+						shouldHL = true
+						break
+					}
+				}
+				if shouldHL && !inHL {
+					result.WriteString(hlStart)
+					inHL = true
+				} else if !shouldHL && inHL {
+					result.WriteString(hlEnd)
+					inHL = false
+				}
+				result.WriteString(m)
+				visibleIdx += visLen
+				rest = rest[len(m):]
 				continue
 			}
 		}
 
 		// Visible character
+		_, size := utf8.DecodeRuneInString(rest)
 		shouldHL := visibleIdx < len(highlight) && highlight[visibleIdx]
 
 		if shouldHL && !inHL {
@@ -1196,9 +1246,9 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 			inHL = false
 		}
 
-		result.WriteRune(runes[i])
+		result.WriteString(rest[:size])
 		visibleIdx++
-		i++
+		rest = rest[size:]
 	}
 
 	if inHL {
