@@ -506,7 +506,7 @@ func (glv *GitLogView) showCommitDetails() {
 		updateDiffText(currentFile, currentStatus, glv.repoRoot, &currentDiffText, ignoreWhitespace)
 
 		if isSplitView {
-			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile)
+			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile, glv.repoRoot)
 		} else {
 			updateDiffViewWithoutCursor(diffView, currentDiffText, foldState, currentFile, glv.repoRoot)
 		}

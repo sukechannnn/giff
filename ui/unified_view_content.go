@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alecthomas/chroma/v2"
 	"github.com/rivo/tview"
 	"github.com/sukechannnn/giff/util"
 )
@@ -195,8 +194,11 @@ func detectFoldableRanges(diffText string, minGap int, totalLines int) []Foldabl
 
 // generateUnifiedViewContent generates content for unified view from diff text
 func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]int, foldState *FoldState, filePath, repoRoot string) *UnifiedViewContent {
+	// Tokenize old/new file versions for syntax highlighting
+	tokenSource := newDiffTokenSource(diffText, filePath, repoRoot, oldLineMap, newLineMap)
+
 	// First colorize the diff
-	coloredLines := colorizeDiff(diffText, filePath)
+	coloredLines := colorizeDiff(diffText, tokenSource)
 
 	// Calculate max digits for line numbers
 	maxDigits := calculateMaxLineNumberDigits(oldLineMap, newLineMap)
@@ -228,7 +230,7 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 
 	// Insert top fold indicator/content at the beginning
 	if topFold != nil {
-		appendFoldContent(content, topFold, foldState, filePath, repoRoot, maxDigits)
+		appendFoldContent(content, topFold, foldState, filePath, repoRoot, maxDigits, tokenSource)
 	}
 
 	for i, cl := range coloredLines {
@@ -242,37 +244,31 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 
 		// Check if we should insert a fold indicator after this line
 		if fold, exists := foldMap[i]; exists {
-			appendFoldContent(content, fold, foldState, filePath, repoRoot, maxDigits)
+			appendFoldContent(content, fold, foldState, filePath, repoRoot, maxDigits, tokenSource)
 		}
 	}
 
 	// Insert bottom fold indicator/content at the end
 	if bottomFold != nil {
-		appendFoldContent(content, bottomFold, foldState, filePath, repoRoot, maxDigits)
+		appendFoldContent(content, bottomFold, foldState, filePath, repoRoot, maxDigits, tokenSource)
 	}
 
 	return content
 }
 
 // appendFoldContent appends fold indicator or expanded content to the unified view
-func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldState *FoldState, filePath, repoRoot string, maxDigits int) {
+func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldState *FoldState, filePath, repoRoot string, maxDigits int, tokenSource *diffTokenSource) {
 	if foldState != nil && foldState.IsExpanded(fold.ID) {
 		// Expanded: show actual file content
 		expandedLines := readFileLines(filePath, repoRoot, fold.StartLine, fold.EndLine)
-
-		// Try to syntax highlight expanded lines
-		var allTokens [][]chroma.Token
-		if filePath != "" {
-			allTokens = util.TokenizeCode(filePath, expandedLines)
-		}
 
 		for lineIdx, expandedLine := range expandedLines {
 			actualLineNum := fold.StartLine + lineIdx
 			lineNumStr := fmt.Sprintf("[dimgray:%s]%*d │ [-:-]", util.ExpandedFoldBg, maxDigits, actualLineNum)
 
 			var lineContent string
-			if allTokens != nil && len(allTokens[lineIdx]) > 0 {
-				lineContent = " " + util.RenderHighlightedLine(allTokens[lineIdx], util.ExpandedFoldBg)
+			if tokens := tokenSource.newFileLineTokens(actualLineNum, expandedLine); len(tokens) > 0 {
+				lineContent = " " + util.RenderHighlightedLine(tokens, util.ExpandedFoldBg)
 			} else {
 				lineContent = fmt.Sprintf("[dimgray:%s] %s[-:-]", util.ExpandedFoldBg, tview.Escape(expandedLine))
 			}
@@ -366,43 +362,10 @@ func readFileLines(filePath, repoRoot string, startLine, endLine int) []string {
 }
 
 // colorizeDiff colorizes diff text and filters out headers.
-// If filePath is non-empty, syntax highlighting via chroma is applied.
-func colorizeDiff(diff string, filePath string) []ColorizedLine {
-	rawLines := util.SplitLines(diff)
-
-	// Collect code lines (without diff prefix) for tokenization
-	var codeLines []string
-	var lineTypes []byte
-	for _, line := range rawLines {
-		if isUnifiedHeaderLine(line) {
-			continue
-		}
-		if len(line) > 0 {
-			switch line[0] {
-			case '-':
-				lineTypes = append(lineTypes, '-')
-				codeLines = append(codeLines, line[1:])
-			case '+':
-				lineTypes = append(lineTypes, '+')
-				codeLines = append(codeLines, line[1:])
-			case ' ':
-				lineTypes = append(lineTypes, ' ')
-				codeLines = append(codeLines, line[1:])
-			default:
-				lineTypes = append(lineTypes, 'o')
-				codeLines = append(codeLines, line)
-			}
-		} else {
-			lineTypes = append(lineTypes, 'o')
-			codeLines = append(codeLines, "")
-		}
-	}
-
-	// Try to tokenize with chroma
-	var allTokens [][]chroma.Token
-	if filePath != "" {
-		allTokens = util.TokenizeCode(filePath, codeLines)
-	}
+// If tokenSource is non-nil, syntax highlighting via chroma is applied.
+func colorizeDiff(diff string, tokenSource *diffTokenSource) []ColorizedLine {
+	// Collect code lines (without diff prefix) for rendering
+	codeLines, lineTypes := extractDiffCodeLines(diff)
 
 	// Compute inline diff masks for adjacent -/+ pairs
 	inlineMasks := computeAllInlineMasks(codeLines, lineTypes)
@@ -425,7 +388,8 @@ func colorizeDiff(diff string, filePath string) []ColorizedLine {
 		}
 		mask := inlineMasks[i]
 
-		if allTokens != nil && len(allTokens[i]) > 0 {
+		tokens := tokenSource.lineTokens(i, lt, codeLine)
+		if len(tokens) > 0 {
 			// Syntax highlighted rendering
 			prefix := ""
 			if lt == '-' || lt == '+' || lt == ' ' {
@@ -433,9 +397,9 @@ func colorizeDiff(diff string, filePath string) []ColorizedLine {
 			}
 			var highlighted string
 			if mask != nil {
-				highlighted = util.RenderHighlightedLineWithMask(allTokens[i], bgColor, mask, inlineBg)
+				highlighted = util.RenderHighlightedLineWithMask(tokens, bgColor, mask, inlineBg)
 			} else {
-				highlighted = util.RenderHighlightedLine(allTokens[i], bgColor)
+				highlighted = util.RenderHighlightedLine(tokens, bgColor)
 			}
 			if bgColor != "" {
 				content = "[" + fgColor + ":" + bgColor + "]" + tview.Escape(prefix) + "[-:-]" + highlighted
@@ -478,7 +442,7 @@ func colorizeDiff(diff string, filePath string) []ColorizedLine {
 
 // ColorizeDiff is a public wrapper for backward compatibility
 func ColorizeDiff(diff string) string {
-	lines := colorizeDiff(diff, "")
+	lines := colorizeDiff(diff, nil)
 	contents := make([]string, len(lines))
 	for i, l := range lines {
 		contents[i] = l.Content

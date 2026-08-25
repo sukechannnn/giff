@@ -252,7 +252,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 	// Set viewUpdater in initial state
 	if ctx.viewUpdater == nil {
 		if *ctx.isSplitView {
-			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile)
+			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile, ctx.repoRoot)
 		} else {
 			ctx.viewUpdater = &UnifiedViewUpdater{
 				diffView:    ctx.diffView,
@@ -335,7 +335,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				restoreStatusFunc()
 			}
 			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile)
+				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
 			} else {
 				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			}
@@ -353,7 +353,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			}
 			// Redraw diff view without cursor
 			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile)
+				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
 			} else {
 				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			}
@@ -388,7 +388,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 				if *ctx.isSplitView {
 					// Show split view (maintain current cursor position)
-					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile)
+					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile, ctx.repoRoot)
 					ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 					ctx.contentFlex.RemoveItem(ctx.unifiedViewFlex)
 					ctx.contentFlex.AddItem(ctx.splitViewFlex, 0, DiffViewFlexRatio, false)
@@ -565,7 +565,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						}
 					}
 				} else {
-					content := getCachedSplitContent(*ctx.currentDiffText, *ctx.currentFile)
+					content := getCachedSplitContent(*ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
 					if content != nil && len(content.BeforeLines) > 0 {
 						if start < 0 {
 							start = 0

@@ -75,14 +75,16 @@ type SplitViewUpdater struct {
 	beforeView *tview.TextView
 	afterView  *tview.TextView
 	filePath   *string
+	repoRoot   string
 }
 
 // NewSplitViewUpdater creates a new SplitViewUpdater
-func NewSplitViewUpdater(beforeView, afterView *tview.TextView, filePath *string) *SplitViewUpdater {
+func NewSplitViewUpdater(beforeView, afterView *tview.TextView, filePath *string, repoRoot string) *SplitViewUpdater {
 	return &SplitViewUpdater{
 		beforeView: beforeView,
 		afterView:  afterView,
 		filePath:   filePath,
+		repoRoot:   repoRoot,
 	}
 }
 
@@ -92,7 +94,7 @@ func (s *SplitViewUpdater) UpdateWithoutCursor(diffText string) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	updateSplitViewWithoutCursor(s.beforeView, s.afterView, diffText, filePath)
+	renderSplitView(s.beforeView, s.afterView, diffText, -1, -1, -1, false, filePath, s.repoRoot)
 }
 
 // UpdateWithCursor updates split view with cursor
@@ -101,7 +103,7 @@ func (s *SplitViewUpdater) UpdateWithCursor(diffText string, cursorY int) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	updateSplitViewWithCursor(s.beforeView, s.afterView, diffText, cursorY, filePath)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, -1, -1, false, filePath, s.repoRoot)
 }
 
 // UpdateWithSelection updates split view with selection
@@ -110,7 +112,7 @@ func (s *SplitViewUpdater) UpdateWithSelection(diffText string, cursorY int, sel
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	updateSplitViewWithSelection(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, filePath)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, filePath, s.repoRoot)
 }
 
 // ----------↓↓↓ unified_view_functions ↓↓↓----------
@@ -222,12 +224,12 @@ var splitContentCache struct {
 	content  *SplitViewContent
 }
 
-func getCachedSplitContent(diffText string, filePath string) *SplitViewContent {
+func getCachedSplitContent(diffText string, filePath, repoRoot string) *SplitViewContent {
 	if splitContentCache.diffText == diffText && splitContentCache.filePath == filePath && splitContentCache.content != nil {
 		return splitContentCache.content
 	}
 	oldLineMap, newLineMap := createLineNumberMapping(diffText)
-	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, filePath)
+	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, filePath, repoRoot)
 	splitContentCache.diffText = diffText
 	splitContentCache.filePath = filePath
 	splitContentCache.content = content
@@ -236,28 +238,24 @@ func getCachedSplitContent(diffText string, filePath string) *SplitViewContent {
 
 // getSplitViewLineCount gets valid line count for split view
 func getSplitViewLineCount(diffText string) int {
-	content := getCachedSplitContent(diffText, "")
+	content := getCachedSplitContent(diffText, "", "")
 	return len(content.BeforeLines)
 }
 
-func updateSplitViewWithoutCursor(beforeView, afterView *tview.TextView, diffText string, filePath string) {
-	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, filePath)
+func updateSplitViewWithoutCursor(beforeView, afterView *tview.TextView, diffText string, filePath, repoRoot string) {
+	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, filePath, repoRoot)
 }
 
 // updateSplitViewWithCursor updates split view with cursor
-func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText string, cursorY int, filePath string) {
-	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, filePath)
+func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText string, cursorY int, filePath, repoRoot string) {
+	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, filePath, repoRoot)
 }
 
-func updateSplitViewWithSelection(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string) {
-	renderSplitView(beforeView, afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, filePath)
-}
-
-func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string) {
+func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath, repoRoot string) {
 	beforeView.Clear()
 	afterView.Clear()
 
-	content := getCachedSplitContent(diffText, filePath)
+	content := getCachedSplitContent(diffText, filePath, repoRoot)
 	beforeLines := content.BeforeLines
 	afterLines := content.AfterLines
 	beforeLineNums := content.BeforeLineNums

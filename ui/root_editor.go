@@ -561,7 +561,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		updateCurrentDiffText(file, status, repoRoot, &currentDiffText, ignoreWhitespace)
 
 		if isSplitView {
-			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile)
+			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile, repoRoot)
 		} else {
 			updateDiffViewWithoutCursor(diffView, currentDiffText, foldState, currentFile, repoRoot)
 		}
@@ -1024,7 +1024,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 								// File list hasn't changed but diff content has changed
 								currentDiffText = newDiffText
 								if isSplitView {
-									updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile)
+									updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile, repoRoot)
 								} else {
 									updateDiffViewWithoutCursor(diffView, currentDiffText, foldState, currentFile, repoRoot)
 								}
@@ -1069,7 +1069,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 								// Update split view if in split mode, otherwise normal update
 								if isSplitView {
-									updateSplitViewWithCursor(beforeView, afterView, currentDiffText, cursorY, currentFile)
+									updateSplitViewWithCursor(beforeView, afterView, currentDiffText, cursorY, currentFile, repoRoot)
 								} else {
 									updateDiffViewWithCursor(diffView, currentDiffText, cursorY, foldState, currentFile, repoRoot)
 								}

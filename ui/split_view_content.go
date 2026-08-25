@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alecthomas/chroma/v2"
 	"github.com/rivo/tview"
 	"github.com/sukechannnn/giff/util"
 )
@@ -21,7 +20,7 @@ type SplitViewContent struct {
 }
 
 // generateSplitViewContent generates content for split view from diff text
-func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]int, filePath string) *SplitViewContent {
+func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]int, filePath, repoRoot string) *SplitViewContent {
 	lines := strings.Split(diffText, "\n")
 	content := &SplitViewContent{
 		BeforeLines:    []string{},
@@ -104,7 +103,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 		}
 	}
 
-	// Collect code lines (without prefix) for tokenization
+	// Collect code lines (without prefix) for rendering
 	var codeLines []string
 	for _, dl := range diffLines {
 		if len(dl.content) > 0 && (dl.content[0] == '-' || dl.content[0] == '+' || dl.content[0] == ' ') {
@@ -114,21 +113,19 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 		}
 	}
 
-	// Tokenize
-	var allTokens [][]chroma.Token
-	if filePath != "" {
-		allTokens = util.TokenizeCode(filePath, codeLines)
-	}
+	// Tokenize old/new file versions for syntax highlighting
+	tokenSource := newDiffTokenSource(diffText, filePath, repoRoot, oldLineMap, newLineMap)
 
 	// Helper: render a code line with syntax highlighting or fallback
 	// mask is optional; when non-nil, inline diff highlighting is applied
 	renderLine := func(idx int, prefix byte, bgColor string, fgColor string, mask []bool, maskBg string) string {
-		if allTokens != nil && len(allTokens[idx]) > 0 {
+		tokens := tokenSource.lineTokens(diffLines[idx].displayIndex, prefix, codeLines[idx])
+		if len(tokens) > 0 {
 			var highlighted string
 			if mask != nil {
-				highlighted = util.RenderHighlightedLineWithMask(allTokens[idx], bgColor, mask, maskBg)
+				highlighted = util.RenderHighlightedLineWithMask(tokens, bgColor, mask, maskBg)
 			} else {
-				highlighted = util.RenderHighlightedLine(allTokens[idx], bgColor)
+				highlighted = util.RenderHighlightedLine(tokens, bgColor)
 			}
 			if bgColor != "" {
 				return "[" + fgColor + ":" + bgColor + "]" + tview.Escape(string(prefix)) + "[-:-]" + highlighted

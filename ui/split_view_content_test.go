@@ -284,7 +284,7 @@ index 123..456 789
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			content := generateSplitViewContent(tt.diffText, tt.oldLineMap, tt.newLineMap, "")
+			content := generateSplitViewContent(tt.diffText, tt.oldLineMap, tt.newLineMap, "", "")
 
 			// Check BeforeLines
 			if len(content.BeforeLines) != len(tt.wantBefore) {

@@ -1028,12 +1028,12 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 
 				if *ctx.isSplitView {
 					// Show split view
-					updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile)
+					updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
 					ctx.contentFlex.RemoveItem(ctx.unifiedViewFlex)
 					ctx.contentFlex.AddItem(ctx.splitViewFlex, 0, DiffViewFlexRatio, false)
 					// Update viewUpdater for split view
 					if ctx.diffViewContext != nil {
-						ctx.diffViewContext.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile)
+						ctx.diffViewContext.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile, ctx.repoRoot)
 					}
 				} else {
 					// Return to normal diff view
@@ -1101,7 +1101,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 						ctx.diffView.SetText("No differences")
 					}
 				} else if *ctx.isSplitView {
-					updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile)
+					updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
 				} else {
 					foldState := ctx.diffViewContext.foldState
 					updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, foldState, *ctx.currentFile, ctx.repoRoot)

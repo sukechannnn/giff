@@ -30,11 +30,14 @@ var syntaxStyle = styles.Get("dracula")
 // defaultTextColor is the fallback text color
 const defaultTextColor = "#f8f8f2"
 
-// tokenCache caches tokenized results using a hash key for fast comparison
+// tokenCache caches tokenized results using a hash key for fast comparison.
+// A single render tokenizes several sources (old file, new file, diff body),
+// so a few entries are kept. The map is reset when it grows past its cap.
+const tokenCacheMaxEntries = 8
+
 var tokenCache struct {
 	sync.Mutex
-	key    uint64
-	tokens [][]chroma.Token
+	entries map[uint64][][]chroma.Token
 }
 
 // hashCacheKey computes a fast hash for the cache key
@@ -55,8 +58,7 @@ func TokenizeCode(filePath string, codeLines []string) [][]chroma.Token {
 	cacheKey := hashCacheKey(filePath, codeLines)
 
 	tokenCache.Lock()
-	if tokenCache.key == cacheKey {
-		result := tokenCache.tokens
+	if result, ok := tokenCache.entries[cacheKey]; ok {
 		tokenCache.Unlock()
 		return result
 	}
@@ -104,8 +106,10 @@ func TokenizeCode(filePath string, codeLines []string) [][]chroma.Token {
 	}
 
 	tokenCache.Lock()
-	tokenCache.key = cacheKey
-	tokenCache.tokens = result
+	if tokenCache.entries == nil || len(tokenCache.entries) >= tokenCacheMaxEntries {
+		tokenCache.entries = make(map[uint64][][]chroma.Token, tokenCacheMaxEntries)
+	}
+	tokenCache.entries[cacheKey] = result
 	tokenCache.Unlock()
 
 	return result

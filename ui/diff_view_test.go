@@ -29,7 +29,7 @@ index 123..456 789
 		4: 4,
 	}
 
-	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, "")
+	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, "", "")
 
 	tests := []struct {
 		name       string
