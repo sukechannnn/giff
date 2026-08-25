@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1096,50 +1095,10 @@ func stripDiffPrefix(line string) string {
 	}
 }
 
-// Regexes matching only what tview actually recognizes, so literal brackets in
-// code (e.g. shell's `[ -n "$VAR" ]` or Go's `[]string`) are left untouched.
-var (
-	// Style tag: [fg:bg:attrs:url] where fg/bg are a color name, #rrggbb, or
-	// "-", attrs are flag letters or "-", and every part is optional — but a
-	// bare "[]" is not a tag.
-	tviewStyleTagRegex = regexp.MustCompile(`^\[(?:(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)(?::(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)?(?::(?:-|[buildsrBUILDSR]+)?(?::[^\[\]]*)?)?)?|:(?:-|#[0-9a-fA-F]{6}|[a-zA-Z][a-zA-Z0-9]*)?(?::(?:-|[buildsrBUILDSR]+)?(?::[^\[\]]*)?)?)\]`)
-	// Region tag: ["name"]
-	tviewRegionTagRegex = regexp.MustCompile(`^\["[a-zA-Z0-9_,;: \-\.]*"\]`)
-	// Escaped tag produced by tview.Escape: "[xyz[]" is displayed as "[xyz]"
-	tviewEscapedTagRegex = regexp.MustCompile(`^\[[^\[\]]+\[+\]`)
-)
-
-// matchTviewTag returns the style/region tag at the start of s, or "" if s does
-// not start with one
-func matchTviewTag(s string) string {
-	if m := tviewStyleTagRegex.FindString(s); m != "" {
-		return m
-	}
-	return tviewRegionTagRegex.FindString(s)
-}
-
 // stripTviewTags returns the text as tview displays it: style/region tags are
 // removed and escaped tags ("[xyz[]") are unescaped back to "[xyz]"
 func stripTviewTags(text string) string {
-	var b strings.Builder
-	for len(text) > 0 {
-		if text[0] == '[' {
-			if m := matchTviewTag(text); m != "" {
-				text = text[len(m):]
-				continue
-			}
-			if m := tviewEscapedTagRegex.FindString(text); m != "" {
-				// Drop one "[" from the closing run: "[xyz[]" -> "[xyz]"
-				b.WriteString(m[:len(m)-2])
-				b.WriteByte(']')
-				text = text[len(m):]
-				continue
-			}
-		}
-		b.WriteByte(text[0])
-		text = text[1:]
-	}
-	return b.String()
+	return util.StripTviewTags(text)
 }
 
 // highlightSearchInTaggedText highlights occurrences of query in a tview-tagged string
@@ -1197,7 +1156,7 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 	for len(rest) > 0 {
 		if rest[0] == '[' {
 			// Style/region tag: invisible, if highlighting re-apply around it
-			if m := matchTviewTag(rest); m != "" {
+			if m := util.MatchTviewTag(rest); m != "" {
 				if inHL {
 					result.WriteString(hlEnd)
 					result.WriteString(m)
@@ -1211,7 +1170,7 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 			// Escaped tag "[xyz[]" displays as "[xyz]". Keep it intact (tags
 			// inserted inside would break the escape sequence) and highlight
 			// the whole unit if any of its visible characters match.
-			if m := tviewEscapedTagRegex.FindString(rest); m != "" {
+			if m := util.MatchTviewEscapedTag(rest); m != "" {
 				visLen := utf8.RuneCountInString(m) - 1
 				shouldHL := false
 				for j := 0; j < visLen && visibleIdx+j < len(highlight); j++ {

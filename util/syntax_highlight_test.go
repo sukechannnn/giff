@@ -166,6 +166,24 @@ func TestReplaceBackground(t *testing.T) {
 			want:  "[#c678dd:dimgrey]func[-:dimgrey] [#61afef:dimgrey]main[-:dimgrey]",
 			newBg: "dimgrey",
 		},
+		{
+			name:  "シェルの test 括弧は書き換えない",
+			input: `[red]if [ -n "$AFFECTED" ]; then[-]`,
+			want:  `[red:blue]if [ -n "$AFFECTED" ]; then[-:blue]`,
+			newBg: "blue",
+		},
+		{
+			name:  "空括弧・数字添字は書き換えない",
+			input: "[green]var s []string = arr[0][-]",
+			want:  "[green:blue]var s []string = arr[0][-:blue]",
+			newBg: "blue",
+		},
+		{
+			name:  "エスケープ済みタグはそのまま",
+			input: "[white]arr[i[] = 1[-]",
+			want:  "[white:blue]arr[i[] = 1[-:blue]",
+			newBg: "blue",
+		},
 	}
 
 	for _, tt := range tests {

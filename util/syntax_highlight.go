@@ -14,14 +14,14 @@ import (
 
 // Diff colors
 const (
-	AddedLineBg     = "#002500"
-	AddedLineFg     = "#00AC37"
-	DeletedLineBg   = "#3A0000"
-	DeletedLineFg   = "#E7454E"
-	InlineAddedBg   = "#1A4D1A"
-	InlineDeletedBg = "#5C1A1A"
+	AddedLineBg       = "#002500"
+	AddedLineFg       = "#00AC37"
+	DeletedLineBg     = "#3A0000"
+	DeletedLineFg     = "#E7454E"
+	InlineAddedBg     = "#1A4D1A"
+	InlineDeletedBg   = "#5C1A1A"
 	SearchHighlightBg = "#665500"
-	ExpandedFoldBg  = "#3a3a3a"
+	ExpandedFoldBg    = "#3a3a3a"
 )
 
 // syntaxStyle is the chroma style used for syntax highlighting
@@ -196,46 +196,50 @@ func ReplaceBackgroundPreserving(line string, newBg string, preserve []string) s
 	for _, p := range preserve {
 		preserveSet[p] = true
 	}
+	return replaceTagBackground(line, newBg, preserveSet)
+}
 
+// replaceTagBackground rewrites the background part of every tview style tag
+// in line to newBg, leaving region tags, escaped tags, and literal brackets in
+// code untouched. Tags whose current background is in preserve are kept as-is.
+func replaceTagBackground(line string, newBg string, preserve map[string]bool) string {
 	var sb strings.Builder
 	i := 0
 	for i < len(line) {
 		if line[i] == '[' {
-			end := strings.IndexByte(line[i:], ']')
-			if end == -1 {
-				sb.WriteByte(line[i])
-				i++
+			rest := line[i:]
+			if m := MatchTviewEscapedTag(rest); m != "" {
+				sb.WriteString(m)
+				i += len(m)
 				continue
 			}
-			tag := line[i+1 : i+end]
-			if strings.Contains(tag, "[]") || len(tag) == 0 {
-				sb.WriteString(line[i : i+end+1])
-				i += end + 1
+			if m := MatchTviewRegionTag(rest); m != "" {
+				sb.WriteString(m)
+				i += len(m)
 				continue
 			}
-			if len(tag) > 0 && tag[0] == '"' {
-				sb.WriteString(line[i : i+end+1])
-				i += end + 1
-				continue
-			}
-
-			parts := strings.SplitN(tag, ":", 2)
-			if len(parts) == 2 {
-				currentBg := parts[1]
-				if preserveSet[currentBg] {
-					// Preserve protected background colors as-is
-					sb.WriteString(line[i : i+end+1])
-				} else {
-					sb.WriteString("[" + parts[0] + ":" + newBg + "]")
+			if m := MatchTviewStyleTag(rest); m != "" {
+				// Split "fg:bg:attrs:url" keeping attrs/url in the tail
+				parts := strings.SplitN(m[1:len(m)-1], ":", 3)
+				bg := ""
+				if len(parts) >= 2 {
+					bg = parts[1]
 				}
-			} else {
-				sb.WriteString("[" + tag + ":" + newBg + "]")
+				if preserve[bg] {
+					sb.WriteString(m)
+				} else {
+					tail := ""
+					if len(parts) == 3 {
+						tail = ":" + parts[2]
+					}
+					sb.WriteString("[" + parts[0] + ":" + newBg + tail + "]")
+				}
+				i += len(m)
+				continue
 			}
-			i += end + 1
-		} else {
-			sb.WriteByte(line[i])
-			i++
 		}
+		sb.WriteByte(line[i])
+		i++
 	}
 	return sb.String()
 }
@@ -244,47 +248,5 @@ func ReplaceBackgroundPreserving(line string, newBg string, preserve []string) s
 // It scans for [fg:bg] patterns and replaces bg with newBg.
 // For tags like [fg] (no bg), it inserts the background.
 func ReplaceBackground(line string, newBg string) string {
-	var sb strings.Builder
-	i := 0
-	for i < len(line) {
-		if line[i] == '[' {
-			// Find closing bracket
-			end := strings.IndexByte(line[i:], ']')
-			if end == -1 {
-				sb.WriteByte(line[i])
-				i++
-				continue
-			}
-			tag := line[i+1 : i+end]
-			// Check if this looks like a color tag (not an escaped bracket like "[")
-			if strings.Contains(tag, "[]") || len(tag) == 0 {
-				// Escaped bracket or empty tag, pass through
-				sb.WriteString(line[i : i+end+1])
-				i += end + 1
-				continue
-			}
-
-			// Check for region tags ["xxx"] - pass through
-			if len(tag) > 0 && tag[0] == '"' {
-				sb.WriteString(line[i : i+end+1])
-				i += end + 1
-				continue
-			}
-
-			parts := strings.SplitN(tag, ":", 2)
-			if len(parts) == 2 {
-				// [fg:bg] -> [fg:newBg]
-				fg := parts[0]
-				sb.WriteString("[" + fg + ":" + newBg + "]")
-			} else {
-				// [fg] -> [fg:newBg]
-				sb.WriteString("[" + tag + ":" + newBg + "]")
-			}
-			i += end + 1
-		} else {
-			sb.WriteByte(line[i])
-			i++
-		}
-	}
-	return sb.String()
+	return replaceTagBackground(line, newBg, nil)
 }
