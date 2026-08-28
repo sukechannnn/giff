@@ -55,9 +55,11 @@ $ giff -v         # show version
 | `Ctrl+J` | Amend |
 | `s` | Split view |
 | `w` | Hide whitespace |
-| `/` | Filter files |
-| `v` | Open in $EDITOR |
-| `c` | Open in VS Code |
+| `/` | Grep the diffs (narrows the list to files with matching changed lines) |
+| `Ctrl+F` | Filter files by name (glob patterns supported) |
+| `v` | Open in $EDITOR (at the current hit while a `/` grep is active) |
+| `c` | Open in VS Code (at the current hit while a `/` grep is active) |
+| `n` / `N` | Next / prev grep hit (while a `/` grep is active) |
 | `Ctrl+L` | Git log |
 | `t` | Open terminal (tmux split) |
 | `Enter` | Switch to diff view |
@@ -73,7 +75,7 @@ $ giff -v         # show version
 | `a` | Stage selected lines |
 | `A` | Stage/unstage file |
 | `/` | Search |
-| `n` / `N` | Next / prev match |
+| `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
 | `e` | Toggle fold |
 | `s` | Split view |
 | `w` | Hide whitespace |

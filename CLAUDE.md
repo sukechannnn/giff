@@ -58,6 +58,7 @@ go build -o giff && ./giff
    - `stage.go`: Applies patches to stage selected lines
    - `commit.go`: Handles git commit operations
    - `calculate_diff_header.go`: Processes diff headers for patch generation
+   - `diff_grep.go`: Greps the changed lines of every pending diff (used by `/` in the file list)
 
 3. **UI Layer** (`ui/` package)
    - `root_editor.go`: Main UI controller that manages the file list and diff views

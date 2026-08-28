@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
@@ -58,6 +59,11 @@ type DiffViewContext struct {
 
 	// Fold state
 	foldState *FoldState
+
+	// Diff content grep state. While a grep narrows the file list, n/N walk
+	// past the end of one file into the next matching one.
+	diffGrepQuery   *string
+	advanceGrepFile func(direction int) bool
 
 	// Search state
 	searchQuery               *string // current search query (empty = no search)
@@ -705,13 +711,13 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				return nil
 			case 'n':
 				// Move to next match
-				if *ctx.searchQuery != "" && len(*ctx.searchMatches) > 0 {
+				if *ctx.searchQuery != "" {
 					moveToNextMatch(ctx)
 				}
 				return nil
 			case 'N':
 				// Move to previous match
-				if *ctx.searchQuery != "" && len(*ctx.searchMatches) > 0 {
+				if *ctx.searchQuery != "" {
 					moveToPrevMatch(ctx)
 				}
 				return nil
@@ -1101,7 +1107,8 @@ func stripTviewTags(text string) string {
 	return util.StripTviewTags(text)
 }
 
-// highlightSearchInTaggedText highlights occurrences of query in a tview-tagged string
+// highlightSearchInTaggedText highlights occurrences of query in a tview-tagged
+// string, ignoring case just like searchInUnifiedContent.
 func highlightSearchInTaggedText(tagged string, query string) string {
 	if query == "" {
 		return tagged
@@ -1121,7 +1128,7 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 	for i := 0; i <= len(plainRunes)-queryLen; i++ {
 		match := true
 		for j := 0; j < queryLen; j++ {
-			if plainRunes[i+j] != queryRunes[j] {
+			if unicode.ToLower(plainRunes[i+j]) != unicode.ToLower(queryRunes[j]) {
 				match = false
 				break
 			}
@@ -1217,12 +1224,15 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 	return result.String()
 }
 
-// searchInUnifiedContent searches for query in unified view content and returns matching line indices
+// searchInUnifiedContent searches for query in unified view content and returns
+// matching line indices. Matching is case-insensitive, like the diff grep that
+// feeds the same search state from the file list.
 func searchInUnifiedContent(content *UnifiedViewContent, query string) []int {
 	var matches []int
+	needle := strings.ToLower(query)
 	for i, line := range content.Lines {
 		plain := stripTviewTags(line.LineNumber + line.Content)
-		if strings.Contains(plain, query) {
+		if strings.Contains(strings.ToLower(plain), needle) {
 			matches = append(matches, i)
 		}
 	}
@@ -1309,9 +1319,41 @@ func performSearch(ctx *DiffViewContext) {
 	}
 }
 
-// moveToNextMatch moves cursor to the next search match
+// grepFileWalkEnabled reports whether n/N may cross file boundaries, which only
+// applies while a diff grep narrows the file list to matching files.
+func grepFileWalkEnabled(ctx *DiffViewContext) bool {
+	return ctx.advanceGrepFile != nil && ctx.diffGrepQuery != nil && *ctx.diffGrepQuery != ""
+}
+
+// showSearchPosition reports the current match position in the status bar,
+// naming the file as well while matches span several of them.
+func showSearchPosition(ctx *DiffViewContext) {
+	if ctx.setGlobalStatusText == nil {
+		return
+	}
+	matches := *ctx.searchMatches
+	if len(matches) == 0 {
+		ctx.setGlobalStatusText(fmt.Sprintf("[tomato]/%s [no match][-]", tview.Escape(*ctx.searchQuery)))
+		return
+	}
+	if grepFileWalkEnabled(ctx) {
+		ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d in %s][-]",
+			tview.Escape(*ctx.searchQuery), *ctx.searchMatchIndex+1, len(matches), tview.Escape(*ctx.currentFile)))
+		return
+	}
+	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]", tview.Escape(*ctx.searchQuery), *ctx.searchMatchIndex+1, len(matches)))
+}
+
+// moveToNextMatch moves cursor to the next search match. While a diff grep is
+// active it steps into the next matching file instead of wrapping around, and
+// only wraps within the current file once no further file has matches.
 func moveToNextMatch(ctx *DiffViewContext) {
 	matches := *ctx.searchMatches
+	atLastMatch := len(matches) == 0 || *ctx.searchMatchIndex+1 >= len(matches)
+	if atLastMatch && grepFileWalkEnabled(ctx) && ctx.advanceGrepFile(1) {
+		showSearchPosition(ctx)
+		return
+	}
 	if len(matches) == 0 {
 		return
 	}
@@ -1320,12 +1362,18 @@ func moveToNextMatch(ctx *DiffViewContext) {
 	if ctx.viewUpdater != nil {
 		ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]", tview.Escape(*ctx.searchQuery), *ctx.searchMatchIndex+1, len(matches)))
+	showSearchPosition(ctx)
 }
 
-// moveToPrevMatch moves cursor to the previous search match
+// moveToPrevMatch moves cursor to the previous search match, stepping into the
+// previous matching file when a diff grep is active.
 func moveToPrevMatch(ctx *DiffViewContext) {
 	matches := *ctx.searchMatches
+	atFirstMatch := len(matches) == 0 || *ctx.searchMatchIndex <= 0
+	if atFirstMatch && grepFileWalkEnabled(ctx) && ctx.advanceGrepFile(-1) {
+		showSearchPosition(ctx)
+		return
+	}
 	if len(matches) == 0 {
 		return
 	}
@@ -1334,5 +1382,5 @@ func moveToPrevMatch(ctx *DiffViewContext) {
 	if ctx.viewUpdater != nil {
 		ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]", tview.Escape(*ctx.searchQuery), *ctx.searchMatchIndex+1, len(matches)))
+	showSearchPosition(ctx)
 }

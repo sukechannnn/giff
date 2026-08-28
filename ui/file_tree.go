@@ -211,11 +211,17 @@ func moveFileListToFile(ctx *FileListKeyContext, direction int) {
 	}
 }
 
+// Prompts marking which of the two file list input modes is running.
+const (
+	diffGrepPrompt   = "/"
+	fileFilterPrompt = "filter:"
+)
+
 // filterInputStatusText renders the filter input shown in the status bar with
 // a block cursor at the given rune position so users can see where editing
 // applies. If the cursor is at the end, a trailing reverse-video space is
 // appended; otherwise the character under the cursor is highlighted.
-func filterInputStatusText(input string, cursor int) string {
+func filterInputStatusText(prompt, input string, cursor int) string {
 	runes := []rune(input)
 	if cursor < 0 {
 		cursor = 0
@@ -224,12 +230,12 @@ func filterInputStatusText(input string, cursor int) string {
 		cursor = len(runes)
 	}
 	if cursor == len(runes) {
-		return fmt.Sprintf("[white]/%s[::r] [::-]", tview.Escape(input))
+		return fmt.Sprintf("[white]%s%s[::r] [::-]", prompt, tview.Escape(input))
 	}
 	before := tview.Escape(string(runes[:cursor]))
 	onCursor := tview.Escape(string(runes[cursor : cursor+1]))
 	after := tview.Escape(string(runes[cursor+1:]))
-	return fmt.Sprintf("[white]/%s[::r]%s[::-]%s", before, onCursor, after)
+	return fmt.Sprintf("[white]%s%s[::r]%s[::-]%s", prompt, before, onCursor, after)
 }
 
 // applyUndoRedoInFileList applies the given undo/redo action and refreshes the
@@ -368,6 +374,7 @@ func renderFileTree(
 	currentLine *int,
 	fileInfos []git.FileInfo,
 	collapseState *DirCollapseState,
+	hitCounts map[string]int,
 ) {
 	// Build status map for O(1) lookup
 	statusMap := make(map[string]string, len(fileInfos))
@@ -390,6 +397,7 @@ func renderFileTree(
 		collapseState,
 		statusMap,
 		nil,
+		hitCounts,
 	)
 }
 
@@ -402,6 +410,7 @@ func BuildFileListContent(
 	lineNumberMap map[int]int,
 	collapseState *DirCollapseState,
 	filterQuery string,
+	grepHits map[string]int,
 ) string {
 	// Rebuild fileList
 	// Clear slice contents (keep the reference)
@@ -410,23 +419,29 @@ func BuildFileListContent(
 		delete(lineNumberMap, k)
 	}
 
-	// Filter files if query is set (supports glob patterns)
-	filterFn := func(files []git.FileInfo) []git.FileInfo {
-		if filterQuery == "" {
+	// Narrow by file name (glob patterns supported) and, when a diff grep is
+	// active (grepHits is non-nil), by whether the file has any matching line.
+	filterFn := func(files []git.FileInfo, stageStatus string) []git.FileInfo {
+		if filterQuery == "" && grepHits == nil {
 			return files
 		}
 		var filtered []git.FileInfo
 		for _, f := range files {
-			entry := FileEntry{Path: f.Path}
-			if matchesFilter(entry, filterQuery) {
-				filtered = append(filtered, f)
+			if filterQuery != "" && !matchesFilter(FileEntry{Path: f.Path}, filterQuery) {
+				continue
 			}
+			if grepHits != nil {
+				if _, ok := grepHits[git.DiffGrepKey(stageStatus, f.Path)]; !ok {
+					continue
+				}
+			}
+			filtered = append(filtered, f)
 		}
 		return filtered
 	}
-	filteredStaged := filterFn(stagedFiles)
-	filteredModified := filterFn(modifiedFiles)
-	filteredUntracked := filterFn(untrackedFiles)
+	filteredStaged := filterFn(stagedFiles, git.GrepStageStaged)
+	filteredModified := filterFn(modifiedFiles, git.GrepStageUnstaged)
+	filteredUntracked := filterFn(untrackedFiles, git.GrepStageUntracked)
 
 	var coloredContent strings.Builder
 	regionIndex := 0
@@ -438,7 +453,7 @@ func BuildFileListContent(
 		currentLine++
 		tree := buildFileTree(filteredStaged)
 		renderFileTree(tree, 1, &coloredContent, fileList,
-			"staged", &regionIndex, currentSelection, focusedPane, lineNumberMap, &currentLine, filteredStaged, collapseState)
+			"staged", &regionIndex, currentSelection, focusedPane, lineNumberMap, &currentLine, filteredStaged, collapseState, grepHits)
 		coloredContent.WriteString("\n")
 		currentLine++
 	}
@@ -468,7 +483,7 @@ func BuildFileListContent(
 		tree := buildFileTree(combined)
 		renderFileTreeForGitFiles(tree, 1, "", &coloredContent, fileList,
 			"unstaged", &regionIndex, currentSelection, focusedPane,
-			lineNumberMap, &currentLine, combined, collapseState, statusMap, stageOverride)
+			lineNumberMap, &currentLine, combined, collapseState, statusMap, stageOverride, grepHits)
 	}
 
 	return coloredContent.String()
@@ -562,7 +577,7 @@ func BuildFileListContentForBrowser(
 	renderFileTreeForGitFiles(
 		tree, 0, "", &content, fileList,
 		"browser", &regionIndex, currentSelection, focusedPane,
-		lineNumberMap, &currentLine, filtered, collapseState, statusMap, nil,
+		lineNumberMap, &currentLine, filtered, collapseState, statusMap, nil, nil,
 	)
 
 	return content.String()
@@ -619,8 +634,17 @@ type FileListKeyContext struct {
 	// File filter state
 	isFilterMode *bool
 	filterInput  string
-	filterCursor int    // rune-index cursor position inside filterInput
-	filterQuery  *string // active filter (empty = no filter)
+	filterCursor int     // rune-index cursor position inside filterInput
+	filterQuery  *string // active file name filter (empty = no filter)
+
+	// Diff content grep state ('/' in the file list). runDiffGrep is nil in
+	// views without pending diffs (git log), where '/' filters by file name.
+	isGrepInput   bool            // the input line in progress greps diffs
+	diffGrepQuery *string         // active grep query (empty = no grep)
+	diffGrepHits  *map[string]int // per-file hit counts, nil while inactive
+	runDiffGrep   func(query string) error
+	// diffGrepStatusText renders the running grep for the status bar.
+	diffGrepStatusText func() string
 
 	// Key handling state for gg chord
 	gPressed  *bool
@@ -634,11 +658,127 @@ type FileListKeyContext struct {
 	updateGlobalStatus     func(string, string)
 	updateStatusTitle      func()
 	setGlobalStatusText    func(string)
-	onEsc                  func() // if non-nil, called on Esc key
-	openTerminal           func() // if non-nil, opens terminal command input
-	toggleFileBrowser      func() // if non-nil, toggles file browser mode
-	isFileBrowserMode      *bool  // pointer to file browser mode flag
+	onEsc                  func()          // if non-nil, called on Esc key
+	openTerminal           func()          // if non-nil, opens terminal command input
+	toggleFileBrowser      func()          // if non-nil, toggles file browser mode
+	isFileBrowserMode      *bool           // pointer to file browser mode flag
 	resizeFileList         func(delta int) // resize file list width
+}
+
+// filterPrompt returns the status bar prefix of the input mode in progress.
+func filterPrompt(ctx *FileListKeyContext) string {
+	if ctx.isGrepInput {
+		return diffGrepPrompt
+	}
+	return fileFilterPrompt
+}
+
+// startFilterInput opens the status bar input line. grep=true searches the
+// contents of the pending diffs, grep=false filters by file name.
+func startFilterInput(ctx *FileListKeyContext, grep bool) {
+	*ctx.isFilterMode = true
+	ctx.isGrepInput = grep
+	ctx.filterInput = ""
+	ctx.filterCursor = 0
+	ctx.updateFileListView() // Redraw without cursor highlight
+	if ctx.setGlobalStatusText != nil {
+		ctx.setGlobalStatusText(filterInputStatusText(filterPrompt(ctx), ctx.filterInput, ctx.filterCursor))
+	}
+}
+
+// grepCursorLineNumber returns the file line number the diff pane's cursor sits
+// on while a grep narrows the list, so an editor can be opened at the hit
+// instead of at the top of the file. It returns 0 when no grep is running, in
+// which case the diff pane has no meaningful cursor of its own yet.
+func grepCursorLineNumber(ctx *FileListKeyContext) int {
+	if ctx.diffViewContext == nil || !diffGrepActive(ctx) {
+		return 0
+	}
+	return getCursorFileLineNumber(ctx.diffViewContext)
+}
+
+// diffGrepActive reports whether a diff content grep is narrowing the list.
+func diffGrepActive(ctx *FileListKeyContext) bool {
+	return ctx.diffGrepQuery != nil && *ctx.diffGrepQuery != ""
+}
+
+// clearDiffGrep drops the active grep along with the match highlighting it
+// installed in the diff view.
+func clearDiffGrep(ctx *FileListKeyContext) {
+	if ctx.diffGrepQuery == nil {
+		return
+	}
+	*ctx.diffGrepQuery = ""
+	if ctx.diffGrepHits != nil {
+		*ctx.diffGrepHits = nil
+	}
+	if ctx.diffViewContext != nil {
+		*ctx.diffViewContext.searchQuery = ""
+		*ctx.diffViewContext.searchMatches = nil
+		*ctx.diffViewContext.searchMatchIndex = -1
+	}
+}
+
+// applyDiffGrep greps the changed lines of every pending diff and narrows the
+// file list to the files that match, annotating each with its hit count.
+func applyDiffGrep(ctx *FileListKeyContext) {
+	if ctx.runDiffGrep == nil {
+		return
+	}
+
+	if ctx.filterInput == "" {
+		clearDiffGrep(ctx)
+		ctx.updateFileListView()
+		ctx.updateSelectedFileDiff()
+		if ctx.setGlobalStatusText != nil {
+			ctx.setGlobalStatusText(fileListKeyMessage)
+		}
+		return
+	}
+
+	if err := ctx.runDiffGrep(ctx.filterInput); err != nil {
+		clearDiffGrep(ctx)
+		ctx.updateFileListView()
+		if ctx.updateGlobalStatus != nil {
+			ctx.updateGlobalStatus("Failed to grep diffs: "+err.Error(), "tomato")
+		}
+		return
+	}
+
+	ctx.updateFileListView()
+
+	// Expand every directory so all surviving files are visible.
+	if ctx.dirCollapseState != nil {
+		for _, entry := range *ctx.fileList {
+			if entry.IsDirectory {
+				ctx.dirCollapseState.SetCollapsed(entry.StageStatus, entry.Path, false)
+			}
+		}
+		ctx.updateFileListView()
+	}
+
+	hasFile := false
+	for _, entry := range *ctx.fileList {
+		if !entry.IsDirectory {
+			hasFile = true
+			break
+		}
+	}
+	if hasFile {
+		// Selects the first surviving file and shows its diff, which installs
+		// the grep query as the diff view's search query.
+		jumpFileListSelection(ctx, true)
+	} else {
+		// Nothing matched: no file to select, but the diff pane still needs to
+		// stop showing whichever file was there before.
+		*ctx.currentSelection = 0
+		ctx.updateSelectedFileDiff()
+	}
+
+	// The query stays in the status bar from here until Esc clears the grep.
+	if ctx.setGlobalStatusText != nil && ctx.diffGrepStatusText != nil {
+		ctx.setGlobalStatusText(ctx.diffGrepStatusText())
+	}
 }
 
 // applyFileFilter updates the file list selection to match the filter query
@@ -647,8 +787,10 @@ func applyFileFilter(ctx *FileListKeyContext) {
 		// Clear filter: reset to show all and select first file
 		*ctx.filterQuery = ""
 		ctx.updateFileListView()
-		if ctx.setGlobalStatusText != nil {
-			ctx.setGlobalStatusText("[white]/[-]")
+		if diffGrepActive(ctx) && restoreStatusFunc != nil {
+			restoreStatusFunc()
+		} else if ctx.setGlobalStatusText != nil {
+			ctx.setGlobalStatusText("[white]" + fileFilterPrompt + "[-]")
 		}
 		return
 	}
@@ -687,9 +829,9 @@ func applyFileFilter(ctx *FileListKeyContext) {
 	ctx.updateSelectedFileDiff()
 	if ctx.setGlobalStatusText != nil {
 		if matched > 0 {
-			ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d matched][-]", tview.Escape(ctx.filterInput), matched))
+			ctx.setGlobalStatusText(fmt.Sprintf("[white]%s%s [%d matched][-]", fileFilterPrompt, tview.Escape(ctx.filterInput), matched))
 		} else {
-			ctx.setGlobalStatusText(fmt.Sprintf("[tomato]/%s [no match][-]", tview.Escape(ctx.filterInput)))
+			ctx.setGlobalStatusText(fmt.Sprintf("[tomato]%s%s [no match][-]", fileFilterPrompt, tview.Escape(ctx.filterInput)))
 		}
 	}
 }
@@ -709,21 +851,33 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 
 			redrawStatus := func() {
 				if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText(filterInputStatusText(ctx.filterInput, ctx.filterCursor))
+					ctx.setGlobalStatusText(filterInputStatusText(filterPrompt(ctx), ctx.filterInput, ctx.filterCursor))
 				}
 			}
 
 			switch event.Key() {
 			case tcell.KeyEnter:
 				*ctx.isFilterMode = false
-				applyFileFilter(ctx)
+				if ctx.isGrepInput {
+					applyDiffGrep(ctx)
+				} else {
+					applyFileFilter(ctx)
+				}
 			case tcell.KeyEsc:
 				*ctx.isFilterMode = false
 				ctx.filterInput = ""
 				ctx.filterCursor = 0
-				*ctx.filterQuery = ""
+				if ctx.isGrepInput {
+					clearDiffGrep(ctx)
+				} else {
+					*ctx.filterQuery = ""
+				}
 				ctx.updateFileListView()
-				if ctx.setGlobalStatusText != nil {
+				ctx.updateSelectedFileDiff()
+				// restoreStatusFunc keeps a still-running grep on screen.
+				if restoreStatusFunc != nil {
+					restoreStatusFunc()
+				} else if ctx.setGlobalStatusText != nil {
 					ctx.setGlobalStatusText(fileListKeyMessage)
 				}
 			case tcell.KeyBackspace, tcell.KeyBackspace2:
@@ -773,9 +927,10 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 
 		switch event.Key() {
 		case tcell.KeyEsc:
-			// If filter is active, clear it first but keep the cursor on the
-			// currently selected entry so users don't lose their place.
-			if *ctx.filterQuery != "" {
+			// If a filter or a diff grep is active, clear it first but keep the
+			// cursor on the currently selected entry so users don't lose their
+			// place.
+			if *ctx.filterQuery != "" || diffGrepActive(ctx) {
 				var selectedPath, selectedStatus string
 				selectedIsDir := false
 				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
@@ -788,6 +943,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				*ctx.filterQuery = ""
 				ctx.filterInput = ""
 				ctx.filterCursor = 0
+				clearDiffGrep(ctx)
 				ctx.updateFileListView()
 
 				newSel := -1
@@ -927,6 +1083,10 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					}
 				}
 			}
+			return nil
+		case tcell.KeyCtrlF:
+			// Ctrl+F filters by file name; '/' greps the diff contents.
+			startFilterInput(ctx, false)
 			return nil
 		case tcell.KeyCtrlL:
 			if ctx.readOnly {
@@ -1074,14 +1234,11 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				}
 				return nil
 			case '/':
-				// Start file filter mode
-				*ctx.isFilterMode = true
-				ctx.filterInput = ""
-				ctx.filterCursor = 0
-				ctx.updateFileListView() // Redraw without cursor highlight
-				if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText(filterInputStatusText(ctx.filterInput, ctx.filterCursor))
-				}
+				// Grep the pending diffs. The file browser shows plain files and
+				// the git log view has no working tree changes, so '/' keeps
+				// filtering by file name there.
+				inBrowser := ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode
+				startFilterInput(ctx, ctx.runDiffGrep != nil && !inBrowser)
 				return nil
 			case 'w':
 				// Toggle ignore-whitespace mode
@@ -1334,14 +1491,21 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					}
 
 					filePath := fileEntry.Path
+					lineNum := grepCursorLineNumber(ctx)
 
 					// Suspend application and launch $EDITOR
 					editor := os.Getenv("EDITOR")
 					if editor == "" {
 						editor = "vim"
 					}
+					editorBase := filepath.Base(editor)
 					ctx.app.Suspend(func() {
-						cmd := exec.Command(editor, filePath)
+						var cmd *exec.Cmd
+						if lineNum > 0 && (editorBase == "vim" || editorBase == "nvim") {
+							cmd = exec.Command(editor, fmt.Sprintf("+%d", lineNum), filePath)
+						} else {
+							cmd = exec.Command(editor, filePath)
+						}
 						cmd.Dir = ctx.repoRoot
 						cmd.Stdin = os.Stdin
 						cmd.Stdout = os.Stdout
@@ -1355,7 +1519,20 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					ctx.updateSelectedFileDiff()
 				}
 				return nil
-			case 'c', 'n': // 'c' or 'n' to open file in VSCode
+			case 'n':
+				// Walk the grep hits without leaving the file list. Stepping off
+				// the end of a file continues into the next matching one, so the
+				// selection follows along.
+				if ctx.diffViewContext != nil && diffGrepActive(ctx) {
+					moveToNextMatch(ctx.diffViewContext)
+				}
+				return nil
+			case 'N':
+				if ctx.diffViewContext != nil && diffGrepActive(ctx) {
+					moveToPrevMatch(ctx.diffViewContext)
+				}
+				return nil
+			case 'c': // 'c' to open file in VSCode
 				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
 					fileEntry := (*ctx.fileList)[*ctx.currentSelection]
 					if fileEntry.IsDirectory {
@@ -1364,7 +1541,11 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 						}
 						return nil
 					}
-					cmd := exec.Command("code", fileEntry.Path)
+					arg := fileEntry.Path
+					if lineNum := grepCursorLineNumber(ctx); lineNum > 0 {
+						arg = fmt.Sprintf("%s:%d", fileEntry.Path, lineNum)
+					}
+					cmd := exec.Command("code", "-g", arg)
 					cmd.Dir = ctx.repoRoot
 					if err := cmd.Start(); err != nil {
 						if ctx.updateGlobalStatus != nil {

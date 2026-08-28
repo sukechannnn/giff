@@ -156,6 +156,7 @@ func renderFileTreeForGitFiles(
 	collapseState *DirCollapseState,
 	statusMap map[string]string,
 	stageStatusOverride map[string]string,
+	hitCounts map[string]int,
 ) {
 	// Sort children for consistent ordering
 	var sortedKeys []string
@@ -217,6 +218,13 @@ func renderFileTreeForGitFiles(
 				displayName = formatFileWithStatus(child.Name, status)
 			}
 
+			// Show how many changed lines matched the active diff grep.
+			if hitCounts != nil {
+				if n, ok := hitCounts[git.DiffGrepKey(entryStage, child.FullPath)]; ok {
+					displayName = fmt.Sprintf("%s [%d]", displayName, n)
+				}
+			}
+
 			// Escape tview color tags
 			escapedDisplayName := escapeTviewTags(displayName)
 
@@ -258,7 +266,7 @@ func renderFileTreeForGitFiles(
 			// Only render children if not collapsed
 			if !collapsed {
 				renderFileTreeForGitFiles(child, depth+1, childPrefix, sb, fileList,
-					stageStatus, regionIndex, currentSelection, focusedPane, lineNumberMap, currentLine, fileInfos, collapseState, statusMap, stageStatusOverride)
+					stageStatus, regionIndex, currentSelection, focusedPane, lineNumberMap, currentLine, fileInfos, collapseState, statusMap, stageStatusOverride, hitCounts)
 			}
 		}
 	}

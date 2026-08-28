@@ -145,6 +145,13 @@ func updateDiffViewWithoutCursor(diffView *tview.TextView, diffText string, fold
 	renderUnifiedView(diffView, diffText, -1, -1, -1, false, foldState, filePath, repoRoot, "")
 }
 
+// updateDiffViewHighlighted renders the unified view with the given query
+// highlighted, used while the file list still holds the focus and a diff grep
+// is narrowing it.
+func updateDiffViewHighlighted(diffView *tview.TextView, diffText string, cursorY int, foldState *FoldState, filePath, repoRoot, searchQuery string) {
+	renderUnifiedView(diffView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot, searchQuery)
+}
+
 func updateDiffViewWithCursor(diffView *tview.TextView, diffText string, cursorY int, foldState *FoldState, filePath, repoRoot string) {
 	renderUnifiedView(diffView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot, "")
 }
