@@ -651,23 +651,22 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 							}
 						}
 
-						oldLineMap, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
+						_, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
 						startLine = -1
 						endLine = -1
 						for i := start; i <= end; i++ {
-							num := -1
-							if n, ok := newLineMap[i]; ok {
-								num = n
-							} else if n, ok := oldLineMap[i]; ok {
-								num = n
+							// Reference the file as it is now: a '-' line is
+							// gone from it, so resolve to the nearest line that
+							// still exists rather than its old number.
+							num, ok := nearestInMap(newLineMap, i)
+							if !ok {
+								continue
 							}
-							if num >= 0 {
-								if startLine == -1 || num < startLine {
-									startLine = num
-								}
-								if num > endLine {
-									endLine = num
-								}
+							if startLine == -1 || num < startLine {
+								startLine = num
+							}
+							if num > endLine {
+								endLine = num
 							}
 						}
 					}
@@ -1239,8 +1238,37 @@ func searchInUnifiedContent(content *UnifiedViewContent, query string) []int {
 	return matches
 }
 
-// getCursorFileLineNumber returns the file line number at the current cursor position.
-// Returns 0 if the line number cannot be determined.
+// nearestInMap returns the value of the entry whose key is closest to idx,
+// preferring the first match below idx and then the one above it. Callers use
+// it for display or diff lines that carry no line number of their own.
+func nearestInMap(m map[int]int, idx int) (int, bool) {
+	if v, ok := m[idx]; ok {
+		return v, true
+	}
+	maxKey := 0
+	for k := range m {
+		if k > maxKey {
+			maxKey = k
+		}
+	}
+	for offset := 1; offset <= maxKey+1; offset++ {
+		if v, ok := m[idx+offset]; ok {
+			return v, true
+		}
+		if idx-offset >= 0 {
+			if v, ok := m[idx-offset]; ok {
+				return v, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// getCursorFileLineNumber returns the line number of the current file that the
+// cursor sits on, for opening editors and copying path:line references. The
+// answer is always a line of the file as it is now: a '-' line has no place in
+// it, so the nearest line that does is used instead. Returns 0 if no line
+// number can be determined.
 func getCursorFileLineNumber(ctx *DiffViewContext) int {
 	if ctx.currentDiffText == nil || *ctx.currentDiffText == "" {
 		return 0
@@ -1256,17 +1284,17 @@ func getCursorFileLineNumber(ctx *DiffViewContext) int {
 	// For unified view, map display index to original diff index (excluding folds)
 	if !*ctx.isSplitView && ctx.foldState != nil {
 		displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-		if mapped, ok := displayMapping[cursorIdx]; ok {
-			cursorIdx = mapped
+		// Fold indicators and expanded fold content are not diff lines and are
+		// absent from the mapping, so fall back to the diff line next to them.
+		mapped, ok := nearestInMap(displayMapping, cursorIdx)
+		if !ok {
+			return 0
 		}
+		cursorIdx = mapped
 	}
 
 	_, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
-	if num, ok := newLineMap[cursorIdx]; ok {
-		return num
-	}
-	oldLineMap, _ := createLineNumberMapping(*ctx.currentDiffText)
-	if num, ok := oldLineMap[cursorIdx]; ok {
+	if num, ok := nearestInMap(newLineMap, cursorIdx); ok {
 		return num
 	}
 	return 0

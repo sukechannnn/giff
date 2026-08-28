@@ -120,3 +120,91 @@ func TestSearchIsCaseInsensitive(t *testing.T) {
 		t.Errorf("highlighting changed the text: %q", stripped)
 	}
 }
+
+func TestGetCursorFileLineNumberUsesNewFileNumbers(t *testing.T) {
+	diff := `diff --git a/f.go b/f.go
+index 1111111..2222222 100644
+--- a/f.go
++++ b/f.go
+@@ -10,6 +10,6 @@ func Foo() {
+ ctx1
+ ctx2
+-removed A
++added C
+ ctx3
+ ctx4
+@@ -40,3 +40,4 @@ func Bar() {
+ ctx5
++added D
+ ctx6
+`
+	// Unified view layout, with the leading and middle gaps folded shut:
+	//   0  fold indicator
+	//   1  ctx1        new 10
+	//   2  ctx2        new 11
+	//   3  -removed A  gone from the new file
+	//   4  +added C    new 12
+	//   5  ctx3        new 13
+	//   6  ctx4        new 14
+	//   7  fold indicator
+	//   8  ctx5        new 40
+	//   9  +added D    new 41
+	//  10  ctx6        new 42
+	cases := []struct {
+		name   string
+		cursor int
+		want   int
+	}{
+		{"context line", 1, 10},
+		{"deleted line resolves to where the change landed", 3, 12},
+		{"added line", 4, 12},
+		{"context line after the change", 5, 13},
+		{"line in the second hunk", 9, 41},
+		{"fold indicator uses the diff line next to it", 7, 40},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cursorY := tt.cursor
+			splitView := false
+			filePath := "f.go"
+			diffText := diff
+			ctx := &DiffViewContext{
+				currentDiffText: &diffText,
+				currentFile:     &filePath,
+				cursorY:         &cursorY,
+				isSplitView:     &splitView,
+				foldState:       NewFoldState(),
+			}
+			if got := getCursorFileLineNumber(ctx); got != tt.want {
+				t.Errorf("getCursorFileLineNumber(cursor %d) = %d, want %d", tt.cursor, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetCursorFileLineNumberAfterLargeDeletion(t *testing.T) {
+	// Twenty removed lines push the old file's numbering far ahead of the new
+	// file's. The deleted line the cursor sits on is displayed with its old
+	// number (22), but the file on disk only has three lines, so an editor
+	// opened there would land nowhere near the change.
+	diff := "diff --git a/f.go b/f.go\n--- a/f.go\n+++ b/f.go\n@@ -1,23 +1,2 @@\n ctx1\n"
+	for i := 0; i < 20; i++ {
+		diff += "-dropped line\n"
+	}
+	diff += "-needle here\n ctx2\n"
+
+	cursorY := 21 // the "-needle here" line
+	splitView := false
+	filePath := "f.go"
+	ctx := &DiffViewContext{
+		currentDiffText: &diff,
+		currentFile:     &filePath,
+		cursorY:         &cursorY,
+		isSplitView:     &splitView,
+		foldState:       NewFoldState(),
+	}
+	if got := getCursorFileLineNumber(ctx); got != 2 {
+		t.Errorf("getCursorFileLineNumber() = %d, want 2 (the following context line in the new file)", got)
+	}
+}
