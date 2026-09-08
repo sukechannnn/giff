@@ -94,6 +94,55 @@ func matchGlob(pattern, path string) bool {
 	return false
 }
 
+// splitPatterns splits a comma separated list of patterns. A comma inside brace
+// alternatives ("*.{ts,tsx}") belongs to the pattern and does not split it, and
+// empty entries left by a stray comma or space are dropped.
+func splitPatterns(query string) []string {
+	var patterns []string
+	add := func(s string) {
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			patterns = append(patterns, trimmed)
+		}
+	}
+
+	depth := 0
+	start := 0
+	for i, r := range query {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				add(query[start:i])
+				start = i + 1
+			}
+		}
+	}
+	add(query[start:])
+
+	return patterns
+}
+
+// matchesPattern matches a single glob or substring pattern against a path.
+func matchesPattern(path, pattern string) bool {
+	// Check if it looks like a glob pattern
+	if strings.ContainsAny(pattern, "*?{[") {
+		for _, p := range expandBraces(pattern) {
+			if matchGlob(p, path) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Plain substring match
+	return strings.Contains(strings.ToLower(path), strings.ToLower(pattern))
+}
+
 func matchesFilter(entry FileEntry, filterQuery string) bool {
 	if filterQuery == "" {
 		return true
@@ -102,19 +151,13 @@ func matchesFilter(entry FileEntry, filterQuery string) bool {
 		return false
 	}
 
-	// Check if it looks like a glob pattern
-	if strings.ContainsAny(filterQuery, "*?{[") {
-		patterns := expandBraces(filterQuery)
-		for _, p := range patterns {
-			if matchGlob(p, entry.Path) {
-				return true
-			}
+	// Several patterns can be listed with commas; matching any one is enough.
+	for _, pattern := range splitPatterns(filterQuery) {
+		if matchesPattern(entry.Path, pattern) {
+			return true
 		}
-		return false
 	}
-
-	// Plain substring match
-	return strings.Contains(strings.ToLower(entry.Path), strings.ToLower(filterQuery))
+	return false
 }
 
 func moveFileListSelection(ctx *FileListKeyContext, direction int) {

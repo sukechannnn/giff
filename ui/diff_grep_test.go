@@ -267,3 +267,59 @@ func TestBuildFileListContentWithExclusion(t *testing.T) {
 		same(t, build("*.ts", "generated"), []string{"app/utils/business.ts"})
 	})
 }
+
+func TestSplitPatterns(t *testing.T) {
+	cases := []struct {
+		query string
+		want  []string
+	}{
+		{"generated", []string{"generated"}},
+		{"generated,node_modules", []string{"generated", "node_modules"}},
+		{"generated, .snap , dist", []string{"generated", ".snap", "dist"}},
+		{"*.{ts,tsx}", []string{"*.{ts,tsx}"}},
+		{"*.{ts,tsx},generated", []string{"*.{ts,tsx}", "generated"}},
+		{"generated,,", []string{"generated"}},
+		{"", nil},
+		{",", nil},
+	}
+	for _, tt := range cases {
+		got := splitPatterns(tt.query)
+		if len(got) != len(tt.want) {
+			t.Errorf("splitPatterns(%q) = %v, want %v", tt.query, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("splitPatterns(%q) = %v, want %v", tt.query, got, tt.want)
+				break
+			}
+		}
+	}
+}
+
+func TestMatchesFilterWithSeveralPatterns(t *testing.T) {
+	cases := []struct {
+		path  string
+		query string
+		want  bool
+	}{
+		{"app/graphql/generated/types.ts", "generated,node_modules", true},
+		{"vendor/node_modules/x.js", "generated,node_modules", true},
+		{"app/components/Foo.tsx", "generated,node_modules", false},
+		// A brace alternative keeps its comma and still matches on its own.
+		{"app/components/Foo.tsx", "*.{ts,tsx}", true},
+		{"app/components/Foo.rb", "*.{ts,tsx}", false},
+		// Globs and substrings can be mixed in one list.
+		{"app/components/Foo.tsx", "generated,*.{ts,tsx}", true},
+		{"app/graphql/generated.ts", "generated,*.rb", true},
+		{"app/models/user.rb", "generated,*.rb", true},
+		{"app/models/user.go", "generated,*.rb", false},
+		// A query of nothing but separators excludes nothing.
+		{"app/models/user.go", ",", false},
+	}
+	for _, tt := range cases {
+		if got := matchesFilter(FileEntry{Path: tt.path}, tt.query); got != tt.want {
+			t.Errorf("matchesFilter(%q, %q) = %v, want %v", tt.path, tt.query, got, tt.want)
+		}
+	}
+}
