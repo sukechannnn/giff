@@ -20,7 +20,7 @@ var preferUnstagedSection bool = false
 
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
-var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  C-f:filter  v:editor  c:code  C-l:log  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
+var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
 var diffViewKeyMessage = "a:stage lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  e:fold  s:split  w:ws  y:yank  Y:copy path  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
@@ -133,13 +133,17 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	var fileFilterQuery string
 	var fileFilterMode bool
 
+	// Path exclusion state ('!' in the file list), for hiding generated code
+	// and other noise. Empty means nothing is excluded.
+	var fileExcludeQuery string
+
 	// Diff content grep state ('/' in the file list). diffGrepHits is nil while
 	// no grep is active and holds per-file hit counts otherwise.
 	var diffGrepQuery string
 	var diffGrepHits map[string]int
-	// diffGrepStatusText renders the running grep for the status bar. It is
-	// assigned further down, once the file list state it reads exists.
-	var diffGrepStatusText func() string
+	// narrowingStatusText renders whatever is narrowing the list for the status
+	// bar. It is assigned further down, once the state it reads exists.
+	var narrowingStatusText func() string
 
 	// Search state
 	var searchQuery string
@@ -169,11 +173,13 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 	restoreStatusFunc = func() {
-		// A running grep owns the status bar until Esc clears it, so its query
-		// stays visible while browsing the files it matched.
-		if diffGrepQuery != "" && diffGrepStatusText != nil {
-			globalStatusView.SetText(diffGrepStatusText())
-			return
+		// Anything narrowing the list owns the status bar until it is cleared,
+		// so a running grep, filter or exclusion is never forgotten.
+		if narrowingStatusText != nil {
+			if text := narrowingStatusText(); text != "" {
+				globalStatusView.SetText(text)
+				return
+			}
 		}
 		if leftPaneFocused {
 			globalStatusView.SetText(fileListKeyMessage)
@@ -399,6 +405,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			lineNumberMap,
 			dirCollapseState,
 			fileFilterQuery,
+			fileExcludeQuery,
 			diffGrepHits,
 		)
 	}
@@ -469,39 +476,75 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
-	// diffGrepStatusText reports the running grep: its query, how much of the
-	// list survived it and, while the file list has the focus, how to get out
-	// of it. The counts come from the rendered list rather than the raw grep
-	// result, because a file name filter can hide files the grep matched.
-	diffGrepStatusText = func() string {
-		files, hits := 0, 0
+	// narrowingStatusText reports every narrowing that is running — the diff
+	// grep, the path exclusion and the file name filter — so what is hidden
+	// stays on screen until it is cleared. Returns "" when nothing narrows the
+	// list. Counts come from the rendered list rather than the raw results,
+	// because the three narrowings stack on top of each other.
+	narrowingStatusText = func() string {
+		shownFiles := 0
 		for _, entry := range fileList {
-			if entry.IsDirectory {
-				continue
-			}
-			if n, ok := diffGrepHits[git.DiffGrepKey(entry.StageStatus, entry.Path)]; ok {
-				files++
-				hits += n
+			if !entry.IsDirectory {
+				shownFiles++
 			}
 		}
 
-		var text string
-		if files > 0 {
-			text = fmt.Sprintf("[white]%s%s [%d files, %d hits][-]",
-				diffGrepPrompt, tview.Escape(diffGrepQuery), files, hits)
-		} else {
-			text = fmt.Sprintf("[tomato]%s%s [no match][-]",
-				diffGrepPrompt, tview.Escape(diffGrepQuery))
+		var parts []string
+
+		if diffGrepQuery != "" {
+			files, hits := 0, 0
+			for _, entry := range fileList {
+				if entry.IsDirectory {
+					continue
+				}
+				if n, ok := diffGrepHits[git.DiffGrepKey(entry.StageStatus, entry.Path)]; ok {
+					files++
+					hits += n
+				}
+			}
+			if files > 0 {
+				parts = append(parts, fmt.Sprintf("[white]%s%s [%d files, %d hits][-]",
+					diffGrepPrompt, tview.Escape(diffGrepQuery), files, hits))
+			} else {
+				parts = append(parts, fmt.Sprintf("[tomato]%s%s [no match][-]",
+					diffGrepPrompt, tview.Escape(diffGrepQuery)))
+			}
 		}
+
+		if fileExcludeQuery != "" {
+			hidden := 0
+			for _, list := range [][]git.FileInfo{*stagedFilesPtr, *modifiedFilesPtr, *untrackedFilesPtr} {
+				for _, fileInfo := range list {
+					if matchesFilter(FileEntry{Path: fileInfo.Path}, fileExcludeQuery) {
+						hidden++
+					}
+				}
+			}
+			parts = append(parts, fmt.Sprintf("[white]%s%s [%d hidden][-]",
+				fileExcludePrompt, tview.Escape(fileExcludeQuery), hidden))
+		}
+
 		if fileFilterQuery != "" {
-			text += fmt.Sprintf("  [white]%s%s[-]", fileFilterPrompt, tview.Escape(fileFilterQuery))
+			if shownFiles > 0 {
+				parts = append(parts, fmt.Sprintf("[white]%s%s [%d matched][-]",
+					fileFilterPrompt, tview.Escape(fileFilterQuery), shownFiles))
+			} else {
+				parts = append(parts, fmt.Sprintf("[tomato]%s%s [no match][-]",
+					fileFilterPrompt, tview.Escape(fileFilterQuery)))
+			}
 		}
-		text += "  [white]n/N:hit[-]"
+
+		if len(parts) == 0 {
+			return ""
+		}
+		if diffGrepQuery != "" {
+			parts = append(parts, "[white]n/N:hit[-]")
+		}
 		if leftPaneFocused {
-			// Esc clears the grep only from the file list.
-			text += "  [white]Esc:clear[-]"
+			// Esc clears the narrowings only from the file list.
+			parts = append(parts, "[white]Esc:clear[-]")
 		}
-		return text
+		return strings.Join(parts, "  ")
 	}
 
 	// runDiffGrep greps the changed lines of every pending diff and remembers
@@ -848,12 +891,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		ignoreWhitespace:  &ignoreWhitespace,
 		isFilterMode:      &fileFilterMode,
 		filterQuery:       &fileFilterQuery,
+		excludeQuery:      &fileExcludeQuery,
 		diffGrepQuery:     &diffGrepQuery,
 		diffGrepHits:      &diffGrepHits,
 		runDiffGrep:       runDiffGrep,
-		diffGrepStatusText: func() string {
-			return diffGrepStatusText()
-		},
 
 		// Key handling state (shared with diff view so `gg` times out together)
 		gPressed:  &gPressed,
@@ -983,6 +1024,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			// The browser lists plain files, which no diff grep applies to.
 			diffGrepQuery = ""
 			diffGrepHits = nil
+			fileExcludeQuery = ""
 			searchQuery = ""
 			searchMatches = nil
 			searchMatchIndex = -1

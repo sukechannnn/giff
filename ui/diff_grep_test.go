@@ -30,7 +30,7 @@ func TestBuildFileListContentWithDiffGrep(t *testing.T) {
 	build := func(filterQuery string, grepHits map[string]int) (string, []FileEntry) {
 		var fileList []FileEntry
 		content := BuildFileListContent(staged, modified, untracked, 0, true,
-			&fileList, make(map[int]int), NewDirCollapseState(), filterQuery, grepHits)
+			&fileList, make(map[int]int), NewDirCollapseState(), filterQuery, "", grepHits)
 		return stripTviewTags(content), fileList
 	}
 
@@ -89,7 +89,7 @@ func TestBuildFileListContentWithDiffGrep(t *testing.T) {
 		dual := []git.FileInfo{{Path: "dual.go", ChangeStatus: "modified"}}
 		var fileList []FileEntry
 		BuildFileListContent(dual, dual, nil, 0, true,
-			&fileList, make(map[int]int), NewDirCollapseState(), "",
+			&fileList, make(map[int]int), NewDirCollapseState(), "", "",
 			map[string]int{git.DiffGrepKey(git.GrepStageUnstaged, "dual.go"): 1})
 
 		if got := filePathsOf(fileList); len(got) != 1 {
@@ -207,4 +207,63 @@ func TestGetCursorFileLineNumberAfterLargeDeletion(t *testing.T) {
 	if got := getCursorFileLineNumber(ctx); got != 2 {
 		t.Errorf("getCursorFileLineNumber() = %d, want 2 (the following context line in the new file)", got)
 	}
+}
+
+func TestBuildFileListContentWithExclusion(t *testing.T) {
+	modified := []git.FileInfo{
+		{Path: "app/graphql/generated/types.ts", ChangeStatus: "modified"},
+		{Path: "app/components/Foo/graphql/generated.ts", ChangeStatus: "modified"},
+		{Path: "app/components/Foo/index.tsx", ChangeStatus: "modified"},
+		{Path: "app/utils/business.ts", ChangeStatus: "modified"},
+	}
+
+	build := func(filterQuery, excludeQuery string) []string {
+		var fileList []FileEntry
+		BuildFileListContent(nil, modified, nil, 0, true,
+			&fileList, make(map[int]int), NewDirCollapseState(), filterQuery, excludeQuery, nil)
+		return filePathsOf(fileList)
+	}
+
+	same := func(t *testing.T, got, want []string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for _, path := range want {
+			found := false
+			for _, g := range got {
+				found = found || g == path
+			}
+			if !found {
+				t.Errorf("%s missing from %v", path, got)
+			}
+		}
+	}
+
+	t.Run("keeps every file when nothing is excluded", func(t *testing.T) {
+		if got := build("", ""); len(got) != 4 {
+			t.Errorf("got %v, want all 4 files", got)
+		}
+	})
+
+	t.Run("drops every path containing the pattern", func(t *testing.T) {
+		same(t, build("", "generated"), []string{
+			"app/components/Foo/index.tsx",
+			"app/utils/business.ts",
+		})
+	})
+
+	t.Run("accepts glob patterns", func(t *testing.T) {
+		// Only the file living in a generated/ directory goes; generated.ts
+		// sits next to hand-written code and keeps its place.
+		same(t, build("", "**/generated/**"), []string{
+			"app/components/Foo/graphql/generated.ts",
+			"app/components/Foo/index.tsx",
+			"app/utils/business.ts",
+		})
+	})
+
+	t.Run("applies alongside a file name filter", func(t *testing.T) {
+		same(t, build("*.ts", "generated"), []string{"app/utils/business.ts"})
+	})
 }

@@ -57,6 +57,7 @@ $ giff -v         # show version
 | `w` | Hide whitespace |
 | `/` | Grep the diffs (narrows the list to files with matching changed lines) |
 | `Ctrl+F` | Filter files by name (glob patterns supported) |
+| `!` | Hide files by path — the inverse of `Ctrl+F`, e.g. `generated` |
 | `v` | Open in $EDITOR (at the current hit while a `/` grep is active) |
 | `c` | Open in VS Code (at the current hit while a `/` grep is active) |
 | `n` / `N` | Next / prev grep hit (while a `/` grep is active) |

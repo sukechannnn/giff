@@ -211,10 +211,20 @@ func moveFileListToFile(ctx *FileListKeyContext, direction int) {
 	}
 }
 
-// Prompts marking which of the two file list input modes is running.
+// filterInputKind identifies which of the file list's input lines is running.
+type filterInputKind int
+
 const (
-	diffGrepPrompt   = "/"
-	fileFilterPrompt = "filter:"
+	filterInputFileName filterInputKind = iota // Ctrl+F, keeps matching files
+	filterInputDiffGrep                        // '/', keeps files with matching changed lines
+	filterInputExclude                         // '!', drops matching files
+)
+
+// Prompts marking which file list input mode is running.
+const (
+	diffGrepPrompt    = "/"
+	fileFilterPrompt  = "filter:"
+	fileExcludePrompt = "!"
 )
 
 // filterInputStatusText renders the filter input shown in the status bar with
@@ -410,6 +420,7 @@ func BuildFileListContent(
 	lineNumberMap map[int]int,
 	collapseState *DirCollapseState,
 	filterQuery string,
+	excludeQuery string,
 	grepHits map[string]int,
 ) string {
 	// Rebuild fileList
@@ -419,14 +430,18 @@ func BuildFileListContent(
 		delete(lineNumberMap, k)
 	}
 
-	// Narrow by file name (glob patterns supported) and, when a diff grep is
-	// active (grepHits is non-nil), by whether the file has any matching line.
+	// Narrow by file name (glob patterns supported), drop the paths the
+	// exclusion matches, and — when a diff grep is active (grepHits is
+	// non-nil) — keep only the files that have a matching changed line.
 	filterFn := func(files []git.FileInfo, stageStatus string) []git.FileInfo {
-		if filterQuery == "" && grepHits == nil {
+		if filterQuery == "" && excludeQuery == "" && grepHits == nil {
 			return files
 		}
 		var filtered []git.FileInfo
 		for _, f := range files {
+			if excludeQuery != "" && matchesFilter(FileEntry{Path: f.Path}, excludeQuery) {
+				continue
+			}
 			if filterQuery != "" && !matchesFilter(FileEntry{Path: f.Path}, filterQuery) {
 				continue
 			}
@@ -637,14 +652,18 @@ type FileListKeyContext struct {
 	filterCursor int     // rune-index cursor position inside filterInput
 	filterQuery  *string // active file name filter (empty = no filter)
 
+	// Path exclusion ('!' in the file list): the inverse of filterQuery, for
+	// dropping generated code and other noise from the list.
+	excludeQuery *string // active exclusion (empty = nothing excluded)
+
+	// Which input line is currently being typed into.
+	filterInputKind filterInputKind
+
 	// Diff content grep state ('/' in the file list). runDiffGrep is nil in
 	// views without pending diffs (git log), where '/' filters by file name.
-	isGrepInput   bool            // the input line in progress greps diffs
 	diffGrepQuery *string         // active grep query (empty = no grep)
 	diffGrepHits  *map[string]int // per-file hit counts, nil while inactive
 	runDiffGrep   func(query string) error
-	// diffGrepStatusText renders the running grep for the status bar.
-	diffGrepStatusText func() string
 
 	// Key handling state for gg chord
 	gPressed  *bool
@@ -667,23 +686,86 @@ type FileListKeyContext struct {
 
 // filterPrompt returns the status bar prefix of the input mode in progress.
 func filterPrompt(ctx *FileListKeyContext) string {
-	if ctx.isGrepInput {
+	switch ctx.filterInputKind {
+	case filterInputDiffGrep:
 		return diffGrepPrompt
+	case filterInputExclude:
+		return fileExcludePrompt
+	default:
+		return fileFilterPrompt
 	}
-	return fileFilterPrompt
 }
 
-// startFilterInput opens the status bar input line. grep=true searches the
-// contents of the pending diffs, grep=false filters by file name.
-func startFilterInput(ctx *FileListKeyContext, grep bool) {
+// startFilterInput opens the status bar input line for the given input mode.
+func startFilterInput(ctx *FileListKeyContext, kind filterInputKind) {
 	*ctx.isFilterMode = true
-	ctx.isGrepInput = grep
+	ctx.filterInputKind = kind
 	ctx.filterInput = ""
 	ctx.filterCursor = 0
 	ctx.updateFileListView() // Redraw without cursor highlight
 	if ctx.setGlobalStatusText != nil {
 		ctx.setGlobalStatusText(filterInputStatusText(filterPrompt(ctx), ctx.filterInput, ctx.filterCursor))
 	}
+}
+
+// showNarrowingStatus puts whatever is narrowing the list back on the status
+// bar, where it stays until cleared so hidden files are never forgotten.
+func showNarrowingStatus(ctx *FileListKeyContext) {
+	if restoreStatusFunc != nil {
+		restoreStatusFunc()
+		return
+	}
+	if ctx.setGlobalStatusText != nil {
+		ctx.setGlobalStatusText(fileListKeyMessage)
+	}
+}
+
+// fileExcludeActive reports whether an exclusion is hiding files.
+func fileExcludeActive(ctx *FileListKeyContext) bool {
+	return ctx.excludeQuery != nil && *ctx.excludeQuery != ""
+}
+
+// applyFileExclude hides every file whose path matches the pattern — the
+// inverse of the Ctrl+F filter, for dropping generated code from the list. The
+// cursor stays where it is unless the file it was on is one of the hidden ones.
+func applyFileExclude(ctx *FileListKeyContext) {
+	if ctx.excludeQuery == nil {
+		return
+	}
+
+	var selectedPath, selectedStatus string
+	selectedIsDir := false
+	if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
+		entry := (*ctx.fileList)[*ctx.currentSelection]
+		selectedPath = entry.Path
+		selectedStatus = entry.StageStatus
+		selectedIsDir = entry.IsDirectory
+	}
+
+	*ctx.excludeQuery = ctx.filterInput
+	ctx.updateFileListView()
+
+	newSel := -1
+	if selectedPath != "" {
+		for i, fe := range *ctx.fileList {
+			if fe.Path == selectedPath && fe.StageStatus == selectedStatus && fe.IsDirectory == selectedIsDir {
+				newSel = i
+				break
+			}
+		}
+	}
+	if newSel >= 0 {
+		*ctx.currentSelection = newSel
+		ctx.updateFileListView()
+		ctx.updateSelectedFileDiff()
+	} else {
+		// The selected file is hidden now, so fall back to the first survivor.
+		*ctx.currentSelection = 0
+		jumpFileListSelection(ctx, true)
+		ctx.updateSelectedFileDiff()
+	}
+
+	showNarrowingStatus(ctx)
 }
 
 // grepCursorLineNumber returns the file line number the diff pane's cursor sits
@@ -730,9 +812,7 @@ func applyDiffGrep(ctx *FileListKeyContext) {
 		clearDiffGrep(ctx)
 		ctx.updateFileListView()
 		ctx.updateSelectedFileDiff()
-		if ctx.setGlobalStatusText != nil {
-			ctx.setGlobalStatusText(fileListKeyMessage)
-		}
+		showNarrowingStatus(ctx)
 		return
 	}
 
@@ -776,9 +856,7 @@ func applyDiffGrep(ctx *FileListKeyContext) {
 	}
 
 	// The query stays in the status bar from here until Esc clears the grep.
-	if ctx.setGlobalStatusText != nil && ctx.diffGrepStatusText != nil {
-		ctx.setGlobalStatusText(ctx.diffGrepStatusText())
-	}
+	showNarrowingStatus(ctx)
 }
 
 // applyFileFilter updates the file list selection to match the filter query
@@ -787,11 +865,7 @@ func applyFileFilter(ctx *FileListKeyContext) {
 		// Clear filter: reset to show all and select first file
 		*ctx.filterQuery = ""
 		ctx.updateFileListView()
-		if diffGrepActive(ctx) && restoreStatusFunc != nil {
-			restoreStatusFunc()
-		} else if ctx.setGlobalStatusText != nil {
-			ctx.setGlobalStatusText("[white]" + fileFilterPrompt + "[-]")
-		}
+		showNarrowingStatus(ctx)
 		return
 	}
 	*ctx.filterQuery = ctx.filterInput
@@ -810,16 +884,12 @@ func applyFileFilter(ctx *FileListKeyContext) {
 		ctx.updateFileListView()
 	}
 
-	// Find first matching file and count matches
-	query := strings.ToLower(ctx.filterInput)
-	matched := 0
+	// Move to the first file that survived the filter
 	firstMatch := -1
 	for i, entry := range *ctx.fileList {
-		if !entry.IsDirectory && strings.Contains(strings.ToLower(entry.Path), query) {
-			matched++
-			if firstMatch < 0 {
-				firstMatch = i
-			}
+		if !entry.IsDirectory {
+			firstMatch = i
+			break
 		}
 	}
 	if firstMatch >= 0 {
@@ -827,13 +897,7 @@ func applyFileFilter(ctx *FileListKeyContext) {
 	}
 	ctx.updateFileListView()
 	ctx.updateSelectedFileDiff()
-	if ctx.setGlobalStatusText != nil {
-		if matched > 0 {
-			ctx.setGlobalStatusText(fmt.Sprintf("[white]%s%s [%d matched][-]", fileFilterPrompt, tview.Escape(ctx.filterInput), matched))
-		} else {
-			ctx.setGlobalStatusText(fmt.Sprintf("[tomato]%s%s [no match][-]", fileFilterPrompt, tview.Escape(ctx.filterInput)))
-		}
-	}
+	showNarrowingStatus(ctx)
 }
 
 // SetupFileListKeyBindings sets up key bindings for file list view
@@ -858,28 +922,32 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			switch event.Key() {
 			case tcell.KeyEnter:
 				*ctx.isFilterMode = false
-				if ctx.isGrepInput {
+				switch ctx.filterInputKind {
+				case filterInputDiffGrep:
 					applyDiffGrep(ctx)
-				} else {
+				case filterInputExclude:
+					applyFileExclude(ctx)
+				default:
 					applyFileFilter(ctx)
 				}
 			case tcell.KeyEsc:
 				*ctx.isFilterMode = false
 				ctx.filterInput = ""
 				ctx.filterCursor = 0
-				if ctx.isGrepInput {
+				switch ctx.filterInputKind {
+				case filterInputDiffGrep:
 					clearDiffGrep(ctx)
-				} else {
+				case filterInputExclude:
+					if ctx.excludeQuery != nil {
+						*ctx.excludeQuery = ""
+					}
+				default:
 					*ctx.filterQuery = ""
 				}
 				ctx.updateFileListView()
 				ctx.updateSelectedFileDiff()
-				// restoreStatusFunc keeps a still-running grep on screen.
-				if restoreStatusFunc != nil {
-					restoreStatusFunc()
-				} else if ctx.setGlobalStatusText != nil {
-					ctx.setGlobalStatusText(fileListKeyMessage)
-				}
+				// Whatever narrowing is left running stays on screen.
+				showNarrowingStatus(ctx)
 			case tcell.KeyBackspace, tcell.KeyBackspace2:
 				if ctx.filterCursor > 0 {
 					ctx.filterInput = string(runes[:ctx.filterCursor-1]) + string(runes[ctx.filterCursor:])
@@ -930,7 +998,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			// If a filter or a diff grep is active, clear it first but keep the
 			// cursor on the currently selected entry so users don't lose their
 			// place.
-			if *ctx.filterQuery != "" || diffGrepActive(ctx) {
+			if *ctx.filterQuery != "" || diffGrepActive(ctx) || fileExcludeActive(ctx) {
 				var selectedPath, selectedStatus string
 				selectedIsDir := false
 				if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
@@ -944,6 +1012,9 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				ctx.filterInput = ""
 				ctx.filterCursor = 0
 				clearDiffGrep(ctx)
+				if ctx.excludeQuery != nil {
+					*ctx.excludeQuery = ""
+				}
 				ctx.updateFileListView()
 
 				newSel := -1
@@ -1086,7 +1157,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			return nil
 		case tcell.KeyCtrlF:
 			// Ctrl+F filters by file name; '/' greps the diff contents.
-			startFilterInput(ctx, false)
+			startFilterInput(ctx, filterInputFileName)
 			return nil
 		case tcell.KeyCtrlL:
 			if ctx.readOnly {
@@ -1238,7 +1309,17 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				// the git log view has no working tree changes, so '/' keeps
 				// filtering by file name there.
 				inBrowser := ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode
-				startFilterInput(ctx, ctx.runDiffGrep != nil && !inBrowser)
+				kind := filterInputDiffGrep
+				if ctx.runDiffGrep == nil || inBrowser {
+					kind = filterInputFileName
+				}
+				startFilterInput(ctx, kind)
+				return nil
+			case '!':
+				// Hide files by path, the inverse of the Ctrl+F filter.
+				if ctx.excludeQuery != nil {
+					startFilterInput(ctx, filterInputExclude)
+				}
 				return nil
 			case 'w':
 				// Toggle ignore-whitespace mode
