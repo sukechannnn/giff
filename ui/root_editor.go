@@ -365,9 +365,25 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	terminalFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 	terminalFlex.SetBorder(true)
 	terminalFlex.SetBorderColor(util.CommitAreaBorderColor.ToTcellColor())
-	terminalFlex.SetTitle(" Terminal (Esc to close) ")
 	terminalFlex.SetTitleAlign(tview.AlignLeft)
 	terminalFlex.SetTitleColor(tcell.ColorWhite)
+
+	// The output pane can only be scrolled while it holds the focus, so Tab
+	// moves between typing and reading and the title says which one is active.
+	const (
+		terminalInputTitle  = " Terminal (Tab: scroll output, Esc: close) "
+		terminalOutputTitle = " Terminal output (j/k: scroll, Tab: back to input, Esc: close) "
+	)
+	terminalFlex.SetTitle(terminalInputTitle)
+
+	focusTerminalInput := func() {
+		terminalFlex.SetTitle(terminalInputTitle)
+		app.SetFocus(terminalInput)
+	}
+	focusTerminalOutput := func() {
+		terminalFlex.SetTitle(terminalOutputTitle)
+		app.SetFocus(terminalOutput)
+	}
 
 	// Left-right split flex
 	contentFlex := tview.NewFlex()
@@ -754,7 +770,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// Terminal open callback (shared between diff view and file list)
 	openTerminalFunc := func() {
 		if isTerminalMode {
-			app.SetFocus(terminalInput)
+			focusTerminalInput()
 			return
 		}
 		isTerminalMode = true
@@ -768,7 +784,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		terminalOutput.Clear()
 		terminalInput.SetText("")
 		mainFlex.AddItem(terminalFlex, 12, 0, true)
-		app.SetFocus(terminalInput)
+		focusTerminalInput()
 	}
 
 	undoStack := NewUndoStack(repoRoot)
@@ -1308,9 +1324,27 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
+	// The output pane borrows the focus only to be scrolled: Tab hands it back
+	// and Esc closes the terminal, the same as from the input line.
+	terminalOutput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab, tcell.KeyBacktab:
+			focusTerminalInput()
+			return nil
+		case tcell.KeyEsc:
+			exitTerminalMode()
+			return nil
+		}
+		return event
+	})
+
 	// Handle up/down arrow for shell history browsing
 	terminalInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
+		case tcell.KeyTab, tcell.KeyBacktab:
+			// Move to the output so it can be scrolled; typing resumes on Tab.
+			focusTerminalOutput()
+			return nil
 		case tcell.KeyUp:
 			if len(shellHistory) == 0 {
 				return nil
@@ -1364,6 +1398,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			// Show running state
 			terminalOutput.Clear()
 			terminalOutput.SetText("[dimgray]running...[-]")
+			terminalOutput.ScrollToBeginning()
 
 			// Execute command asynchronously to avoid UI freeze
 			go func() {
@@ -1401,6 +1436,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 						}
 					}
 					terminalOutput.SetText(result.String())
+					terminalOutput.ScrollToBeginning()
 
 					// Refresh file list in case git state changed
 					refreshFileList()

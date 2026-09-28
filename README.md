@@ -62,7 +62,7 @@ $ giff -v         # show version
 | `c` | Open in VS Code (at the current hit while a `/` grep is active) |
 | `n` / `N` | Next / prev grep hit (while a `/` grep is active) |
 | `Ctrl+L` | Git log |
-| `t` | Open terminal (tmux split) |
+| `t` | Open a terminal pane — run a command, `Tab` scrolls its output |
 | `Enter` | Switch to diff view |
 | `q` | Quit |
 
