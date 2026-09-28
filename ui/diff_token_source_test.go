@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/chroma/v2"
 )
 
 // dracula の文字列色。hunk 冒頭の閉じ """ を開きと誤認すると
@@ -105,6 +107,46 @@ func TestSplitViewHighlightsHunkStartingMidDocstring(t *testing.T) {
 		if !found {
 			t.Fatal("import 行が見つからない")
 		}
+	}
+}
+
+// 大きなファイルの末尾付近の hunk では、ファイル先頭からではなく hunk の
+// 手前だけをトークナイズしつつ、docstring の途中から始まる hunk も正しく
+// ハイライトされること
+func TestLineTokensLargeFileTokenizesOnlyAroundHunks(t *testing.T) {
+	const filler = 2000
+	var sb strings.Builder
+	for i := 0; i < filler; i++ {
+		sb.WriteString("y = 0\n")
+	}
+	sb.WriteString(midDocstringNewFile)
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "test.py"), []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diff := strings.Replace(midDocstringDiff, "@@ -4,5 +4,5 @@", "@@ -2004,5 +2004,5 @@", 1)
+
+	oldLineMap, newLineMap := createLineNumberMapping(diff)
+	source := newDiffTokenSource(diff, "test.py", repoRoot, oldLineMap, newLineMap)
+
+	// displayIdx 2 = "import os"
+	tokens := source.lineTokens(2, ' ', "import os")
+	if len(tokens) == 0 {
+		t.Fatal("import 行のトークンが返らない")
+	}
+	for _, tok := range tokens {
+		if tok.Type.InCategory(chroma.LiteralString) {
+			t.Errorf("import 行が文字列としてトークナイズされている: %v", tokens)
+		}
+	}
+
+	if source.newFile.done[0] || source.oldFile.done[0] {
+		t.Error("hunk から離れたファイル先頭までトークナイズされている")
+	}
+
+	// 展開した fold の行は必要になった時点でトークナイズされる
+	if tokens := source.newFileLineTokens(1, "y = 0"); len(tokens) == 0 {
+		t.Error("fold 展開行のトークンが返らない")
 	}
 }
 
