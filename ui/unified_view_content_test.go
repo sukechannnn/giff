@@ -400,6 +400,44 @@ index 123..456 789
 				{StartLine: 18, EndLine: 29, InsertAt: -2, LineCount: 12, ID: "fold-bottom-18-29"},
 			},
 		},
+		{
+			// Two hunks separated by fewer than minGap lines must still show
+			// those lines (here 4-5 and the edges), otherwise they silently
+			// disappear from the view.
+			name: "gaps shorter than minGap are returned as fixed ranges",
+			diffText: `diff --git a/test.txt b/test.txt
+@@ -2,2 +3,3 @@
+ c
++C
+@@ -6,2 +8,3 @@
+ f
++F
+ g
+`,
+			minGap:     3,
+			totalLines: 12,
+			want: []FoldableRange{
+				{StartLine: 1, EndLine: 2, InsertAt: -1, LineCount: 2, ID: "fold-top-1-2", Fixed: true},
+				{StartLine: 5, EndLine: 7, InsertAt: 1, LineCount: 3, ID: "fold-5-7"},
+				{StartLine: 11, EndLine: 12, InsertAt: -2, LineCount: 2, ID: "fold-bottom-11-12", Fixed: true},
+			},
+		},
+		{
+			name: "mid gap below minGap is fixed",
+			diffText: `diff --git a/test.txt b/test.txt
+@@ -1,2 +1,3 @@
+ a
++A
+@@ -4,2 +5,3 @@
+ d
++D
+`,
+			minGap:     3,
+			totalLines: 0,
+			want: []FoldableRange{
+				{StartLine: 3, EndLine: 4, InsertAt: 1, LineCount: 2, ID: "fold-3-4", Fixed: true},
+			},
+		},
 	}
 
 	for _, tt := range tests {

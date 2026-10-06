@@ -23,6 +23,7 @@ type UnifiedViewLine struct {
 	LineType        byte   // '+', '-', ' ', 'o' (other/fold)
 	IsFoldIndicator bool   // True if this is a fold indicator line (not a real diff line)
 	FoldID          string // Fold identifier (empty if not a fold indicator)
+	FoldFixed       bool   // True if the fold is always expanded and cannot be toggled
 	BgColor         string // Background color for the entire line (empty = default)
 }
 
@@ -38,6 +39,7 @@ type FoldableRange struct {
 	InsertAt  int    // Display index where fold indicator should be inserted
 	LineCount int    // Number of lines in the fold
 	ID        string // Unique identifier for this fold
+	Fixed     bool   // Gap too small to fold: always shown expanded, cannot be collapsed
 }
 
 // GetUnifiedViewLineCount returns the actual line count including fold indicators
@@ -74,6 +76,8 @@ func MapUnifiedDisplayToOriginalIdx(diffText string, foldState *FoldState, fileP
 // line numbers consistently. Mixing old and new line numbers (e.g., for `-` lines that
 // only have old-file numbers) produces spurious folds when many deletions or additions
 // cause the two numbering systems to diverge within a hunk.
+// Gaps shorter than minGap are still returned, marked Fixed, so they are shown inline
+// instead of disappearing between two hunks.
 // totalLines is the total number of lines in the new file (0 if unknown, which disables bottom folds).
 func detectFoldableRanges(diffText string, minGap int, totalLines int) []FoldableRange {
 	lines := strings.Split(diffText, "\n")
@@ -146,15 +150,14 @@ func detectFoldableRanges(diffText string, minGap int, totalLines int) []Foldabl
 	// Top fold: hidden lines before the first displayed line.
 	if firstNewPosition > 1 {
 		topGap := firstNewPosition - 1
-		if topGap >= minGap {
-			ranges = append(ranges, FoldableRange{
-				StartLine: 1,
-				EndLine:   firstNewPosition - 1,
-				InsertAt:  -1, // Special value: insert at the beginning
-				LineCount: topGap,
-				ID:        fmt.Sprintf("fold-top-1-%d", firstNewPosition-1),
-			})
-		}
+		ranges = append(ranges, FoldableRange{
+			StartLine: 1,
+			EndLine:   firstNewPosition - 1,
+			InsertAt:  -1, // Special value: insert at the beginning
+			LineCount: topGap,
+			ID:        fmt.Sprintf("fold-top-1-%d", firstNewPosition-1),
+			Fixed:     topGap < minGap,
+		})
 	}
 
 	// Mid folds: gaps between consecutive lines that actually show new-file content.
@@ -164,13 +167,14 @@ func detectFoldableRanges(diffText string, minGap int, totalLines int) []Foldabl
 		current := shown[i]
 		next := shown[i+1]
 		gap := next.newLine - current.newLine - 1
-		if gap >= minGap {
+		if gap > 0 {
 			ranges = append(ranges, FoldableRange{
 				StartLine: current.newLine + 1,
 				EndLine:   next.newLine - 1,
 				InsertAt:  next.displayIdx - 1,
 				LineCount: gap,
 				ID:        fmt.Sprintf("fold-%d-%d", current.newLine+1, next.newLine-1),
+				Fixed:     gap < minGap,
 			})
 		}
 	}
@@ -178,15 +182,14 @@ func detectFoldableRanges(diffText string, minGap int, totalLines int) []Foldabl
 	// Bottom fold: hidden lines after the last displayed line.
 	if totalLines > 0 && lastNewPositionAfter <= totalLines {
 		bottomGap := totalLines - lastNewPositionAfter + 1
-		if bottomGap >= minGap {
-			ranges = append(ranges, FoldableRange{
-				StartLine: lastNewPositionAfter,
-				EndLine:   totalLines,
-				InsertAt:  -2, // Special value: insert at the end
-				LineCount: bottomGap,
-				ID:        fmt.Sprintf("fold-bottom-%d-%d", lastNewPositionAfter, totalLines),
-			})
-		}
+		ranges = append(ranges, FoldableRange{
+			StartLine: lastNewPositionAfter,
+			EndLine:   totalLines,
+			InsertAt:  -2, // Special value: insert at the end
+			LineCount: bottomGap,
+			ID:        fmt.Sprintf("fold-bottom-%d-%d", lastNewPositionAfter, totalLines),
+			Fixed:     bottomGap < minGap,
+		})
 	}
 
 	return ranges
@@ -258,7 +261,7 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 
 // appendFoldContent appends fold indicator or expanded content to the unified view
 func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldState *FoldState, filePath, repoRoot string, maxDigits int, tokenSource *diffTokenSource) {
-	if foldState != nil && foldState.IsExpanded(fold.ID) {
+	if fold.Fixed || (foldState != nil && foldState.IsExpanded(fold.ID)) {
 		// Expanded: show actual file content
 		expandedLines := readFileLines(filePath, repoRoot, fold.StartLine, fold.EndLine)
 
@@ -279,6 +282,7 @@ func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldSta
 				LineType:        'o',
 				IsFoldIndicator: false,
 				FoldID:          fold.ID,
+				FoldFixed:       fold.Fixed,
 				BgColor:         util.ExpandedFoldBg,
 			})
 		}
@@ -305,7 +309,8 @@ func getFileTotalLines(filePath, repoRoot string) int {
 	if err != nil {
 		return 0
 	}
-	lines := strings.Split(string(content), "\n")
+	// A trailing newline terminates the last line rather than starting a new one
+	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
 	return len(lines)
 }
 
@@ -314,7 +319,7 @@ func GetFoldIDAtLine(diffText string, lineIndex int, foldState *FoldState, fileP
 	oldLineMap, newLineMap := createLineNumberMapping(diffText)
 	content := generateUnifiedViewContent(diffText, oldLineMap, newLineMap, foldState, filePath, repoRoot)
 
-	if lineIndex >= 0 && lineIndex < len(content.Lines) {
+	if lineIndex >= 0 && lineIndex < len(content.Lines) && !content.Lines[lineIndex].FoldFixed {
 		return content.Lines[lineIndex].FoldID
 	}
 	return ""
