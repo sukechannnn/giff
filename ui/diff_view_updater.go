@@ -74,15 +74,17 @@ func (u *UnifiedViewUpdater) UpdateWithSelection(diffText string, cursorY int, s
 type SplitViewUpdater struct {
 	beforeView *tview.TextView
 	afterView  *tview.TextView
+	foldState  *FoldState
 	filePath   *string
 	repoRoot   string
 }
 
 // NewSplitViewUpdater creates a new SplitViewUpdater
-func NewSplitViewUpdater(beforeView, afterView *tview.TextView, filePath *string, repoRoot string) *SplitViewUpdater {
+func NewSplitViewUpdater(beforeView, afterView *tview.TextView, foldState *FoldState, filePath *string, repoRoot string) *SplitViewUpdater {
 	return &SplitViewUpdater{
 		beforeView: beforeView,
 		afterView:  afterView,
+		foldState:  foldState,
 		filePath:   filePath,
 		repoRoot:   repoRoot,
 	}
@@ -94,7 +96,7 @@ func (s *SplitViewUpdater) UpdateWithoutCursor(diffText string) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, -1, -1, -1, false, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, -1, -1, -1, false, s.foldState, filePath, s.repoRoot)
 }
 
 // UpdateWithCursor updates split view with cursor
@@ -103,7 +105,7 @@ func (s *SplitViewUpdater) UpdateWithCursor(diffText string, cursorY int) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, -1, -1, false, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, -1, -1, false, s.foldState, filePath, s.repoRoot)
 }
 
 // UpdateWithSelection updates split view with selection
@@ -112,7 +114,7 @@ func (s *SplitViewUpdater) UpdateWithSelection(diffText string, cursorY int, sel
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, s.foldState, filePath, s.repoRoot)
 }
 
 // ----------↓↓↓ unified_view_functions ↓↓↓----------
@@ -231,38 +233,43 @@ var splitContentCache struct {
 	content  *SplitViewContent
 }
 
-func getCachedSplitContent(diffText string, filePath, repoRoot string) *SplitViewContent {
+func getCachedSplitContent(diffText string, foldState *FoldState, filePath, repoRoot string) *SplitViewContent {
 	if splitContentCache.diffText == diffText && splitContentCache.filePath == filePath && splitContentCache.content != nil {
 		return splitContentCache.content
 	}
 	oldLineMap, newLineMap := createLineNumberMapping(diffText)
-	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, filePath, repoRoot)
+	content := generateSplitViewContent(diffText, oldLineMap, newLineMap, foldState, filePath, repoRoot)
 	splitContentCache.diffText = diffText
 	splitContentCache.filePath = filePath
 	splitContentCache.content = content
 	return content
 }
 
+// InvalidateSplitContentCache clears the split content cache (call when fold state changes)
+func InvalidateSplitContentCache() {
+	splitContentCache.content = nil
+}
+
 // getSplitViewLineCount gets valid line count for split view
-func getSplitViewLineCount(diffText string) int {
-	content := getCachedSplitContent(diffText, "", "")
+func getSplitViewLineCount(diffText string, foldState *FoldState, filePath, repoRoot string) int {
+	content := getCachedSplitContent(diffText, foldState, filePath, repoRoot)
 	return len(content.BeforeLines)
 }
 
-func updateSplitViewWithoutCursor(beforeView, afterView *tview.TextView, diffText string, filePath, repoRoot string) {
-	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, filePath, repoRoot)
+func updateSplitViewWithoutCursor(beforeView, afterView *tview.TextView, diffText string, foldState *FoldState, filePath, repoRoot string) {
+	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, foldState, filePath, repoRoot)
 }
 
 // updateSplitViewWithCursor updates split view with cursor
-func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText string, cursorY int, filePath, repoRoot string) {
-	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, filePath, repoRoot)
+func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText string, cursorY int, foldState *FoldState, filePath, repoRoot string) {
+	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot)
 }
 
-func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath, repoRoot string) {
+func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, foldState *FoldState, filePath, repoRoot string) {
 	beforeView.Clear()
 	afterView.Clear()
 
-	content := getCachedSplitContent(diffText, filePath, repoRoot)
+	content := getCachedSplitContent(diffText, foldState, filePath, repoRoot)
 	beforeLines := content.BeforeLines
 	afterLines := content.AfterLines
 	beforeLineNums := content.BeforeLineNums
@@ -288,6 +295,9 @@ func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cur
 			// Cursor line: replace background with blue
 			highlighted := util.ReplaceBackground(line, "blue")
 			beforeView.Write([]byte("[white:blue]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
+		} else if bg := content.Rows[i].BgColor; bg != "" {
+			// Expanded fold row: fill the whole row like unified view does
+			beforeView.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + line + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
 		} else {
 			beforeView.Write([]byte("[dimgray]" + lineNum + "[-]" + line + "\n"))
 		}
@@ -305,6 +315,9 @@ func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cur
 			// Cursor line: replace background with blue
 			highlighted := util.ReplaceBackground(line, "blue")
 			afterView.Write([]byte("[white:blue]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
+		} else if bg := content.Rows[i].BgColor; bg != "" {
+			// Expanded fold row: fill the whole row like unified view does
+			afterView.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + line + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
 		} else {
 			afterView.Write([]byte("[dimgray]" + lineNum + "[-]" + line + "\n"))
 		}

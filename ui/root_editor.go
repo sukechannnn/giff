@@ -719,7 +719,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 		if isSplitView {
 			// The split view has no search highlighting to carry over.
-			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile, repoRoot)
+			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, foldState, currentFile, repoRoot)
 		} else if diffGrepQuery != "" {
 			// Show where the grep matched, scrolling to the first match.
 			updateDiffViewHighlighted(diffView, currentDiffText, cursorY, foldState, currentFile, repoRoot, searchQuery)
@@ -1244,7 +1244,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 								// File list hasn't changed but diff content has changed
 								currentDiffText = newDiffText
 								if isSplitView {
-									updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, currentFile, repoRoot)
+									updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, foldState, currentFile, repoRoot)
 								} else {
 									updateDiffViewWithoutCursor(diffView, currentDiffText, foldState, currentFile, repoRoot)
 								}
@@ -1289,7 +1289,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 								// Update split view if in split mode, otherwise normal update
 								if isSplitView {
-									updateSplitViewWithCursor(beforeView, afterView, currentDiffText, cursorY, currentFile, repoRoot)
+									updateSplitViewWithCursor(beforeView, afterView, currentDiffText, cursorY, foldState, currentFile, repoRoot)
 								} else {
 									updateDiffViewWithCursor(diffView, currentDiffText, cursorY, foldState, currentFile, repoRoot)
 								}

@@ -87,7 +87,7 @@ func TestSplitViewHighlightsHunkStartingMidDocstring(t *testing.T) {
 	repoRoot := writeMidDocstringFile(t)
 
 	oldLineMap, newLineMap := createLineNumberMapping(midDocstringDiff)
-	content := generateSplitViewContent(midDocstringDiff, oldLineMap, newLineMap, "test.py", repoRoot)
+	content := generateSplitViewContent(midDocstringDiff, oldLineMap, newLineMap, nil, "test.py", repoRoot)
 
 	// 閉じ """ の行は正当に文字列色になるため、import 行だけを検証する
 	for _, lines := range [][]string{content.BeforeLines, content.AfterLines} {

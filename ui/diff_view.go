@@ -155,7 +155,7 @@ func applyUndoRedoInDiffView(ctx *DiffViewContext, action func() (string, error)
 func moveCursorDown(ctx *DiffViewContext) {
 	maxLines := 0
 	if *ctx.isSplitView {
-		splitViewLines := getSplitViewLineCount(*ctx.currentDiffText)
+		splitViewLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 		if splitViewLines > 0 {
 			maxLines = splitViewLines - 1
 		}
@@ -196,7 +196,7 @@ func moveCursorUp(ctx *DiffViewContext) {
 func scrollDiffView(ctx *DiffViewContext, direction int) {
 	if *ctx.isSplitView {
 		currentRow, _ := ctx.beforeView.GetScrollOffset()
-		maxLines := getSplitViewLineCount(*ctx.currentDiffText)
+		maxLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 
 		nextRow := currentRow + direction
 		// Update scroll position (keep within range)
@@ -258,7 +258,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 	// Set viewUpdater in initial state
 	if ctx.viewUpdater == nil {
 		if *ctx.isSplitView {
-			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile, ctx.repoRoot)
+			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot)
 		} else {
 			ctx.viewUpdater = &UnifiedViewUpdater{
 				diffView:    ctx.diffView,
@@ -341,7 +341,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				restoreStatusFunc()
 			}
 			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
+				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			} else {
 				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			}
@@ -359,7 +359,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			}
 			// Redraw diff view without cursor
 			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
+				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			} else {
 				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 			}
@@ -394,7 +394,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 				if *ctx.isSplitView {
 					// Show split view (maintain current cursor position)
-					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.currentFile, ctx.repoRoot)
+					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot)
 					ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 					ctx.contentFlex.RemoveItem(ctx.unifiedViewFlex)
 					ctx.contentFlex.AddItem(ctx.splitViewFlex, 0, DiffViewFlexRatio, false)
@@ -476,7 +476,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				maxLines := 0
 				if *ctx.isSplitView {
 					// For split view, get valid line count
-					splitViewLines := getSplitViewLineCount(*ctx.currentDiffText)
+					splitViewLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 					if splitViewLines > 0 {
 						maxLines = splitViewLines - 1
 					}
@@ -571,7 +571,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						}
 					}
 				} else {
-					content := getCachedSplitContent(*ctx.currentDiffText, *ctx.currentFile, ctx.repoRoot)
+					content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 					if content != nil && len(content.BeforeLines) > 0 {
 						if start < 0 {
 							start = 0
@@ -641,7 +641,12 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 						endLine = end + 1
 					} else {
 						// Diff mode: use line number mapping
-						if !*ctx.isSplitView {
+						if *ctx.isSplitView {
+							content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+							if ds, de, ok := content.DiffRange(start, end); ok {
+								start, end = ds, de
+							}
+						} else {
 							displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 							if ms, ok := displayMapping[start]; ok {
 								start = ms
@@ -801,17 +806,28 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				return nil
 			case 'e':
 				// Expand/collapse fold at cursor
-				if !*ctx.isSplitView && ctx.foldState != nil {
-					foldID := GetFoldIDAtLine(*ctx.currentDiffText, *ctx.cursorY, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+				if ctx.foldState != nil {
+					var foldID string
+					if *ctx.isSplitView {
+						content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+						foldID = content.FoldIDAtRow(*ctx.cursorY)
+					} else {
+						foldID = GetFoldIDAtLine(*ctx.currentDiffText, *ctx.cursorY, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+					}
 					if foldID != "" {
 						wasExpanded := ctx.foldState.IsExpanded(foldID)
 						ctx.foldState.ToggleExpand(foldID)
 						InvalidateUnifiedContentCache()
+						InvalidateSplitContentCache()
 
 						// If collapsing, move cursor to the fold indicator position
 						if wasExpanded {
-							newPos := GetFoldIndicatorPosition(*ctx.currentDiffText, foldID, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-							*ctx.cursorY = newPos
+							if *ctx.isSplitView {
+								content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+								*ctx.cursorY = content.FoldRow(foldID)
+							} else {
+								*ctx.cursorY = GetFoldIndicatorPosition(*ctx.currentDiffText, foldID, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+							}
 						}
 
 						if ctx.viewUpdater != nil {
@@ -829,7 +845,18 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				// For unified view, convert to actual diff line indices excluding fold indicators
 				selectStart := *ctx.selectStart
 				selectEnd := *ctx.selectEnd
-				if !*ctx.isSplitView {
+				if *ctx.isSplitView {
+					// Split rows pair '-' and '+' lines and include folds, so
+					// convert the selected rows to the diff lines they show
+					if selectStart >= 0 && selectEnd >= 0 {
+						content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+						start, end, ok := content.DiffRange(selectStart, selectEnd)
+						if !ok {
+							return nil
+						}
+						selectStart, selectEnd = start, end
+					}
+				} else {
 					// Get mapping excluding fold indicators
 					displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 					// Convert selection range to indices excluding fold indicators
@@ -880,7 +907,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 				// Cursor position boundary check
 				newCursorPos := result.NewCursorPos
-				if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
+				if *ctx.isSplitView && len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
+					// NewCursorPos is a diff line index; find the row showing it
+					content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+					newCursorPos = content.RowForDiffIdx(newCursorPos)
+					if newCursorPos < 0 {
+						newCursorPos = 0
+					}
+				} else if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
 					coloredDiff := ColorizeDiff(*ctx.currentDiffText)
 					diffLines := util.SplitLines(coloredDiff)
 					maxLines := len(diffLines) - 1
@@ -1281,8 +1315,16 @@ func getCursorFileLineNumber(ctx *DiffViewContext) int {
 
 	cursorIdx := *ctx.cursorY
 
-	// For unified view, map display index to original diff index (excluding folds)
-	if !*ctx.isSplitView && ctx.foldState != nil {
+	if *ctx.isSplitView {
+		// Map the row to a diff line; fold rows fall back to the diff line next to them
+		content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		mapped, ok := nearestInMap(content.RowToDiffIdx(), cursorIdx)
+		if !ok {
+			return 0
+		}
+		cursorIdx = mapped
+	} else if ctx.foldState != nil {
+		// For unified view, map display index to original diff index (excluding folds)
 		displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 		// Fold indicators and expanded fold content are not diff lines and are
 		// absent from the mapping, so fall back to the diff line next to them.

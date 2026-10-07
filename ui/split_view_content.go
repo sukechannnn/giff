@@ -17,16 +17,69 @@ type SplitViewContent struct {
 	AfterLines     []string
 	BeforeLineNums []string
 	AfterLineNums  []string
+	Rows           []SplitViewRow // Per-row metadata, parallel to the slices above
+}
+
+// SplitViewRow describes what a split view row shows
+type SplitViewRow struct {
+	DiffStart int    // First diff display index shown on this row (-1 for fold rows)
+	DiffEnd   int    // Last diff display index shown on this row (-1 for fold rows)
+	FoldID    string // Fold identifier for fold indicator / expanded fold rows
+	FoldFixed bool   // True if the fold is always expanded and cannot be toggled
+	BgColor   string // Background color for the entire row (empty = default)
+}
+
+// splitHunk holds the position of a hunk header within the diff body
+type splitHunk struct {
+	firstLine int // Index into diffLines of the hunk's first body line
+	oldStart  int
+	oldCount  int
+	newStart  int
+	newCount  int
+}
+
+// parseHunkHeader parses "@@ -oldStart[,oldCount] +newStart[,newCount] @@"
+func parseHunkHeader(line string) (oldStart, oldCount, newStart, newCount int) {
+	oldCount, newCount = 1, 1
+	fields := strings.Fields(line)
+	for _, f := range fields[1:] {
+		if len(f) < 2 || (f[0] != '-' && f[0] != '+') {
+			continue
+		}
+		start, count := 0, 1
+		if i := strings.IndexByte(f, ','); i >= 0 {
+			fmt.Sscanf(f[1:i], "%d", &start)
+			fmt.Sscanf(f[i+1:], "%d", &count)
+		} else {
+			fmt.Sscanf(f[1:], "%d", &start)
+		}
+		if f[0] == '-' {
+			oldStart, oldCount = start, count
+		} else {
+			newStart, newCount = start, count
+			break
+		}
+	}
+	return
 }
 
 // generateSplitViewContent generates content for split view from diff text
-func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]int, filePath, repoRoot string) *SplitViewContent {
-	lines := strings.Split(diffText, "\n")
+func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]int, foldState *FoldState, filePath, repoRoot string) *SplitViewContent {
+	// The diff's final newline ends its last line rather than adding an empty one
+	lines := strings.Split(strings.TrimSuffix(diffText, "\n"), "\n")
 	content := &SplitViewContent{
 		BeforeLines:    []string{},
 		AfterLines:     []string{},
 		BeforeLineNums: []string{},
 		AfterLineNums:  []string{},
+	}
+
+	addRow := func(before, beforeNum, after, afterNum string, row SplitViewRow) {
+		content.BeforeLines = append(content.BeforeLines, before)
+		content.AfterLines = append(content.AfterLines, after)
+		content.BeforeLineNums = append(content.BeforeLineNums, beforeNum)
+		content.AfterLineNums = append(content.AfterLineNums, afterNum)
+		content.Rows = append(content.Rows, row)
 	}
 
 	var inHunk bool = false
@@ -44,10 +97,8 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 				continue
 			}
 			escapedLine := tview.Escape(line)
-			content.BeforeLines = append(content.BeforeLines, " "+escapedLine)
-			content.AfterLines = append(content.AfterLines, " "+escapedLine)
-			content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
-			content.AfterLineNums = append(content.AfterLineNums, strings.Repeat(" ", maxDigits))
+			blank := strings.Repeat(" ", maxDigits)
+			addRow(" "+escapedLine, blank, " "+escapedLine, blank, SplitViewRow{DiffStart: -1, DiffEnd: -1})
 		}
 		return content
 	}
@@ -62,6 +113,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 	}
 
 	var diffLines []diffLine
+	var hunks []splitHunk
 
 	for _, line := range lines {
 		// Hide header lines
@@ -72,6 +124,14 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 		if strings.HasPrefix(line, "@@") {
 			// Hunk header (hidden)
 			inHunk = true
+			oldStart, oldCount, newStart, newCount := parseHunkHeader(line)
+			hunks = append(hunks, splitHunk{
+				firstLine: len(diffLines),
+				oldStart:  oldStart,
+				oldCount:  oldCount,
+				newStart:  newStart,
+				newCount:  newCount,
+			})
 			continue
 		} else if inHunk {
 			lineType := "other"
@@ -149,11 +209,85 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 		return escaped
 	}
 
+	// Folds: the unchanged regions between hunks, shared with unified view
+	// through the fold IDs so expanding one shows it in both views.
+	isHunkStart := make(map[int]bool)
+	for _, h := range hunks {
+		isHunkStart[h.firstLine] = true
+	}
+	var topFold, bottomFold *FoldableRange
+	foldBeforeLine := make(map[int]*FoldableRange) // diffLines index -> fold shown before it
+	foldOldOffset := make(map[string]int)          // fold ID -> old line number minus new line number
+	if len(hunks) > 0 {
+		foldableRanges := detectFoldableRanges(diffText, 3, getFileTotalLines(filePath, repoRoot))
+		last := hunks[len(hunks)-1]
+		for i := range foldableRanges {
+			fold := &foldableRanges[i]
+			switch fold.InsertAt {
+			case -1:
+				topFold = fold
+				foldOldOffset[fold.ID] = hunks[0].oldStart - hunks[0].newStart
+			case -2:
+				bottomFold = fold
+				foldOldOffset[fold.ID] = (last.oldStart + last.oldCount) - (last.newStart + last.newCount)
+			default:
+				// The hidden lines sit right before the first hunk starting
+				// at or after them; the old side is in step with the new
+				// side up to that hunk.
+				for _, h := range hunks {
+					if h.newStart >= fold.StartLine {
+						foldBeforeLine[h.firstLine] = fold
+						foldOldOffset[fold.ID] = h.oldStart - h.newStart
+						break
+					}
+				}
+			}
+		}
+	}
+
+	appendFold := func(fold *FoldableRange) {
+		if fold.Fixed || (foldState != nil && foldState.IsExpanded(fold.ID)) {
+			offset := foldOldOffset[fold.ID]
+			expandedLines := readFileLines(filePath, repoRoot, fold.StartLine, fold.EndLine)
+			for lineIdx, expandedLine := range expandedLines {
+				newNum := fold.StartLine + lineIdx
+				var line string
+				if tokens := tokenSource.newFileLineTokens(newNum, expandedLine); len(tokens) > 0 {
+					line = " " + util.RenderHighlightedLine(tokens, util.ExpandedFoldBg)
+				} else {
+					line = fmt.Sprintf("[dimgray:%s] %s[-:-]", util.ExpandedFoldBg, tview.Escape(expandedLine))
+				}
+				oldNumStr := strings.Repeat(" ", maxDigits)
+				if oldNum := newNum + offset; oldNum > 0 {
+					oldNumStr = fmt.Sprintf("%*d", maxDigits, oldNum)
+				}
+				addRow(line, oldNumStr, line, fmt.Sprintf("%*d", maxDigits, newNum), SplitViewRow{
+					DiffStart: -1,
+					DiffEnd:   -1,
+					FoldID:    fold.ID,
+					FoldFixed: fold.Fixed,
+					BgColor:   util.ExpandedFoldBg,
+				})
+			}
+			return
+		}
+		indicator := fmt.Sprintf("[dimgray]... %d lines hidden (press 'e' to expand) ...[-]", fold.LineCount)
+		blank := strings.Repeat(" ", maxDigits)
+		addRow(indicator, blank, indicator, blank, SplitViewRow{DiffStart: -1, DiffEnd: -1, FoldID: fold.ID})
+	}
+
+	if topFold != nil {
+		appendFold(topFold)
+	}
+
 	// Pairing: group consecutive - and + lines together
 	i := 0
 	codeIdx := 0 // tracks index into codeLines/allTokens
 	for i < len(diffLines) {
 		line := diffLines[i]
+		if fold, ok := foldBeforeLine[i]; ok {
+			appendFold(fold)
+		}
 
 		switch line.lineType {
 		case "-":
@@ -162,7 +296,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 			deletions := []diffLine{line}
 			j := i + 1
 			codeIdx++
-			for j < len(diffLines) && diffLines[j].lineType == "-" {
+			for j < len(diffLines) && diffLines[j].lineType == "-" && !isHunkStart[j] {
 				deletions = append(deletions, diffLines[j])
 				j++
 				codeIdx++
@@ -171,7 +305,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 			// Collect consecutive + lines
 			addStartIdx := codeIdx
 			additions := []diffLine{}
-			for j < len(diffLines) && diffLines[j].lineType == "+" {
+			for j < len(diffLines) && diffLines[j].lineType == "+" && !isHunkStart[j] {
 				additions = append(additions, diffLines[j])
 				j++
 				codeIdx++
@@ -219,66 +353,132 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 					afterLineNum = strings.Repeat(" ", maxDigits)
 				}
 
-				content.BeforeLines = append(content.BeforeLines, beforeLine)
-				content.AfterLines = append(content.AfterLines, afterLine)
-				content.BeforeLineNums = append(content.BeforeLineNums, beforeLineNum)
-				content.AfterLineNums = append(content.AfterLineNums, afterLineNum)
+				row := SplitViewRow{DiffStart: -1, DiffEnd: -1}
+				if k < len(deletions) {
+					row.DiffStart = deletions[k].displayIndex
+					row.DiffEnd = deletions[k].displayIndex
+				}
+				if k < len(additions) {
+					if row.DiffStart < 0 {
+						row.DiffStart = additions[k].displayIndex
+					}
+					row.DiffEnd = additions[k].displayIndex
+				}
+				addRow(beforeLine, beforeLineNum, afterLine, afterLineNum, row)
 			}
 
 			i = j
 		case "+":
 			// Unpaired + line (addition without deletion)
-			content.BeforeLines = append(content.BeforeLines, splitPlaceholderLine)
-			content.AfterLines = append(content.AfterLines, renderLine(codeIdx, '+', util.AddedLineBg, util.AddedLineFg, nil, ""))
-
-			content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
+			afterLineNum := strings.Repeat(" ", maxDigits)
 			if line.newLineNum >= 0 {
-				content.AfterLineNums = append(content.AfterLineNums, fmt.Sprintf("%*d", maxDigits, line.newLineNum))
-			} else {
-				content.AfterLineNums = append(content.AfterLineNums, strings.Repeat(" ", maxDigits))
+				afterLineNum = fmt.Sprintf("%*d", maxDigits, line.newLineNum)
 			}
+			addRow(splitPlaceholderLine, strings.Repeat(" ", maxDigits),
+				renderLine(codeIdx, '+', util.AddedLineBg, util.AddedLineFg, nil, ""), afterLineNum,
+				SplitViewRow{DiffStart: line.displayIndex, DiffEnd: line.displayIndex})
 			i++
 			codeIdx++
 		case " ":
 			// Unchanged context line
 			contextLine := renderLine(codeIdx, ' ', "", "", nil, "")
-			content.BeforeLines = append(content.BeforeLines, contextLine)
-			content.AfterLines = append(content.AfterLines, contextLine)
-
-			if line.oldLineNum >= 0 {
-				content.BeforeLineNums = append(content.BeforeLineNums, fmt.Sprintf("%*d", maxDigits, line.oldLineNum))
-			} else {
-				content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
-			}
-			if line.newLineNum >= 0 {
-				content.AfterLineNums = append(content.AfterLineNums, fmt.Sprintf("%*d", maxDigits, line.newLineNum))
-			} else {
-				content.AfterLineNums = append(content.AfterLineNums, strings.Repeat(" ", maxDigits))
-			}
+			beforeLineNum, afterLineNum := splitLineNums(line.oldLineNum, line.newLineNum, maxDigits)
+			addRow(contextLine, beforeLineNum, contextLine, afterLineNum,
+				SplitViewRow{DiffStart: line.displayIndex, DiffEnd: line.displayIndex})
 			i++
 			codeIdx++
 		default:
 			// Other lines
 			escapedLine := tview.Escape(line.content)
-			content.BeforeLines = append(content.BeforeLines, " "+escapedLine)
-			content.AfterLines = append(content.AfterLines, " "+escapedLine)
-
-			if line.oldLineNum >= 0 {
-				content.BeforeLineNums = append(content.BeforeLineNums, fmt.Sprintf("%*d", maxDigits, line.oldLineNum))
-			} else {
-				content.BeforeLineNums = append(content.BeforeLineNums, strings.Repeat(" ", maxDigits))
-			}
-			if line.newLineNum >= 0 {
-				content.AfterLineNums = append(content.AfterLineNums, fmt.Sprintf("%*d", maxDigits, line.newLineNum))
-			} else {
-				content.AfterLineNums = append(content.AfterLineNums, strings.Repeat(" ", maxDigits))
-			}
+			beforeLineNum, afterLineNum := splitLineNums(line.oldLineNum, line.newLineNum, maxDigits)
+			addRow(" "+escapedLine, beforeLineNum, " "+escapedLine, afterLineNum,
+				SplitViewRow{DiffStart: line.displayIndex, DiffEnd: line.displayIndex})
 			i++
 			codeIdx++
 		}
 	}
 
+	if bottomFold != nil {
+		appendFold(bottomFold)
+	}
+
 	return content
+}
+
+// splitLineNums formats the old/new line numbers of a row, blank when absent
+func splitLineNums(oldNum, newNum, maxDigits int) (string, string) {
+	beforeLineNum := strings.Repeat(" ", maxDigits)
+	afterLineNum := strings.Repeat(" ", maxDigits)
+	if oldNum >= 0 {
+		beforeLineNum = fmt.Sprintf("%*d", maxDigits, oldNum)
+	}
+	if newNum >= 0 {
+		afterLineNum = fmt.Sprintf("%*d", maxDigits, newNum)
+	}
+	return beforeLineNum, afterLineNum
+}
+
+// DiffRange returns the range of diff display indices shown on rows
+// startRow..endRow, skipping fold rows. ok is false when the rows show no
+// diff line at all.
+func (c *SplitViewContent) DiffRange(startRow, endRow int) (start, end int, ok bool) {
+	if startRow > endRow {
+		startRow, endRow = endRow, startRow
+	}
+	start, end = -1, -1
+	for r := startRow; r <= endRow; r++ {
+		if r < 0 || r >= len(c.Rows) || c.Rows[r].DiffStart < 0 {
+			continue
+		}
+		if start < 0 || c.Rows[r].DiffStart < start {
+			start = c.Rows[r].DiffStart
+		}
+		if c.Rows[r].DiffEnd > end {
+			end = c.Rows[r].DiffEnd
+		}
+	}
+	return start, end, start >= 0
+}
+
+// RowToDiffIdx maps each row that shows diff lines to the last diff display
+// index on it (the '+' side of a paired row). Fold rows are absent.
+func (c *SplitViewContent) RowToDiffIdx() map[int]int {
+	mapping := make(map[int]int)
+	for r, row := range c.Rows {
+		if row.DiffStart >= 0 {
+			mapping[r] = row.DiffEnd
+		}
+	}
+	return mapping
+}
+
+// RowForDiffIdx returns the row showing the given diff display index, or the
+// first row after it when it is not shown. Returns the last row if none follows.
+func (c *SplitViewContent) RowForDiffIdx(idx int) int {
+	for r, row := range c.Rows {
+		if row.DiffStart >= 0 && row.DiffEnd >= idx {
+			return r
+		}
+	}
+	return len(c.Rows) - 1
+}
+
+// FoldIDAtRow returns the ID of the toggleable fold shown on the row, or ""
+func (c *SplitViewContent) FoldIDAtRow(row int) string {
+	if row < 0 || row >= len(c.Rows) || c.Rows[row].FoldFixed {
+		return ""
+	}
+	return c.Rows[row].FoldID
+}
+
+// FoldRow returns the first row belonging to the fold, or -1
+func (c *SplitViewContent) FoldRow(foldID string) int {
+	for r, row := range c.Rows {
+		if row.FoldID == foldID {
+			return r
+		}
+	}
+	return -1
 }
 
 // hasHunkHeader reports whether the diff lines contain at least one hunk header
