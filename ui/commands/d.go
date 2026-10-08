@@ -2,9 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/sukechannnn/giff/git"
@@ -32,18 +29,15 @@ func CommandD(params CommandDParams) error {
 
 	// Delete the file if it is untracked
 	if params.CurrentStatus == "untracked" {
-		fullPath := filepath.Join(params.RepoRoot, params.CurrentFile)
-		if err := os.RemoveAll(fullPath); err != nil {
+		if err := git.DeleteUntrackedFile(params.CurrentFile, params.RepoRoot); err != nil {
 			return fmt.Errorf("failed to delete %s: %w", params.CurrentFile, err)
 		}
 		return nil
 	}
 
 	// Discard changes via git checkout for unstaged files
-	cmd := exec.Command("git", "checkout", "--", params.CurrentFile)
-	cmd.Dir = params.RepoRoot
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("discard changes for %s failed: %w (output: %s)", params.CurrentFile, err, string(output))
+	if err := git.DiscardFileChanges(params.CurrentFile, params.RepoRoot); err != nil {
+		return fmt.Errorf("discard changes for %s failed: %w", params.CurrentFile, err)
 	}
 
 	return nil

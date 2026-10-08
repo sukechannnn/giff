@@ -3,9 +3,26 @@ package git
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// DiscardFileChanges reverts every unstaged change of a tracked file in the
+// working tree to the index version, leaving staged changes as they are
+func DiscardFileChanges(filePath string, repoRoot string) error {
+	cmd := exec.Command("git", "checkout", "--", filePath)
+	cmd.Dir = repoRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w (output: %s)", err, string(output))
+	}
+	return nil
+}
+
+// DeleteUntrackedFile removes an untracked file (or directory) from the working tree
+func DeleteUntrackedFile(filePath string, repoRoot string) error {
+	return os.RemoveAll(filepath.Join(repoRoot, filePath))
+}
 
 // DiscardSelectedChanges reverts the changes on diff lines selectedStart..selectedEnd
 // (indices into diffText split by "\n") in the working tree file, leaving every other

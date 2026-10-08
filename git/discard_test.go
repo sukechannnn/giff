@@ -202,3 +202,36 @@ func TestDiscardSelectedChangesRefusesStaleDiff(t *testing.T) {
 		t.Errorf("file must be left untouched, got %q", got)
 	}
 }
+
+func TestDiscardFileChanges(t *testing.T) {
+	repo := setupDiscardRepo(t, "ONE\ntwo\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\n")
+	stagedBefore := stagedDiff(t, repo)
+
+	if err := DiscardFileChanges("a.txt", repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Back to the index version: the staged "ONE" stays, the unstaged "two" is gone
+	want := strings.Replace(discardBase, "line 1\n", "ONE\n", 1)
+	if got := readA(t, repo); got != want {
+		t.Errorf("working tree:\ngot  %q\nwant %q", got, want)
+	}
+	if got := stagedDiff(t, repo); got != stagedBefore {
+		t.Errorf("staged changes must be kept:\ngot  %q\nwant %q", got, stagedBefore)
+	}
+}
+
+func TestDeleteUntrackedFile(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "new.txt")
+	if err := os.WriteFile(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DeleteUntrackedFile("new.txt", repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("new.txt must be deleted, stat error: %v", err)
+	}
+}
