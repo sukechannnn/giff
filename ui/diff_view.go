@@ -28,6 +28,7 @@ type DiffViewContext struct {
 	unifiedViewFlex *tview.Flex
 	contentFlex     *tview.Flex
 	app             *tview.Application
+	mainView        tview.Primitive // root layout, restored after a confirmation modal
 
 	// State
 	cursorY               *int
@@ -794,10 +795,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				return nil
 			case 'd':
 				// In read-only mode (git log), 'd' exits back
-				if ctx.readOnly && ctx.onEsc != nil {
-					ctx.onEsc()
+				if ctx.readOnly {
+					if ctx.onEsc != nil {
+						ctx.onEsc()
+					}
 					return nil
 				}
+				discardSelectedLines(ctx)
+				return nil
 			case 't':
 				// Open terminal command input
 				if ctx.openTerminal != nil {
@@ -841,31 +846,9 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					return nil
 				}
 				snapshot, _ := ctx.undoStack.CaptureSnapshot()
-				// Call commandA function
-				// For unified view, convert to actual diff line indices excluding fold indicators
-				selectStart := *ctx.selectStart
-				selectEnd := *ctx.selectEnd
-				if *ctx.isSplitView {
-					// Split rows pair '-' and '+' lines and include folds, so
-					// convert the selected rows to the diff lines they show
-					if selectStart >= 0 && selectEnd >= 0 {
-						content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-						start, end, ok := content.DiffRange(selectStart, selectEnd)
-						if !ok {
-							return nil
-						}
-						selectStart, selectEnd = start, end
-					}
-				} else {
-					// Get mapping excluding fold indicators
-					displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-					// Convert selection range to indices excluding fold indicators
-					if mappedStart, ok := displayMapping[selectStart]; ok {
-						selectStart = mappedStart
-					}
-					if mappedEnd, ok := displayMapping[selectEnd]; ok {
-						selectEnd = mappedEnd
-					}
+				selectStart, selectEnd, ok := selectionToDiffDisplayRange(ctx)
+				if !ok {
+					return nil
 				}
 
 				params := commands.CommandAParams{
@@ -897,85 +880,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					ctx.undoStack.Push(snapshot, desc)
 				}
 
-				// Apply results
-				*ctx.currentDiffText = result.NewDiffText
-
-				// Deselect and update cursor position
-				*ctx.isSelecting = false
-				*ctx.selectStart = -1
-				*ctx.selectEnd = -1
-
-				// Cursor position boundary check
-				newCursorPos := result.NewCursorPos
-				if *ctx.isSplitView && len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
-					// NewCursorPos is a diff line index; find the row showing it
-					content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-					newCursorPos = content.RowForDiffIdx(newCursorPos)
-					if newCursorPos < 0 {
-						newCursorPos = 0
-					}
-				} else if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
-					coloredDiff := ColorizeDiff(*ctx.currentDiffText)
-					diffLines := util.SplitLines(coloredDiff)
-					maxLines := len(diffLines) - 1
-					if maxLines < 0 {
-						maxLines = 0
-					}
-					if newCursorPos > maxLines {
-						newCursorPos = maxLines
-					}
-					if newCursorPos < 0 {
-						newCursorPos = 0
-					}
-				} else {
-					newCursorPos = 0
-				}
-				*ctx.cursorY = newCursorPos
-
-				// Redraw
-				if ctx.viewUpdater != nil {
-					ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
-				}
-
-				// Internally update file list
-				ctx.refreshFileList()
-
-				// If diff remains
-				if !result.ShouldUpdate {
-					// Save currently selected file and status
-					var currentlySelectedFile string
-					var currentlySelectedStatus string
-					if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
-						fileEntry := (*ctx.fileList)[*ctx.currentSelection]
-						currentlySelectedFile = fileEntry.Path
-						currentlySelectedStatus = fileEntry.StageStatus
-					}
-
-					// Redraw file list
-					ctx.updateFileListView()
-
-					// Restore selection position (search by both filename and status)
-					newSelection := -1
-					for i, fileEntry := range *ctx.fileList {
-						if fileEntry.Path == currentlySelectedFile && fileEntry.StageStatus == currentlySelectedStatus {
-							newSelection = i
-							break
-						}
-					}
-					if newSelection >= 0 {
-						*ctx.currentSelection = newSelection
-					} else if *ctx.currentSelection >= len(*ctx.fileList) {
-						*ctx.currentSelection = len(*ctx.fileList) - 1
-					}
-
-					// Update file list again if selection position changed
-					ctx.updateFileListView()
-				} else {
-					// If diff is gone, fully update
-					if ctx.onUpdate != nil {
-						ctx.onUpdate()
-					}
-				}
+				applyDiffChange(ctx, result.NewDiffText, result.NewCursorPos)
 				return nil
 			case 'A':
 				if ctx.readOnly {
@@ -1453,4 +1358,190 @@ func moveToPrevMatch(ctx *DiffViewContext) {
 		ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 	}
 	showSearchPosition(ctx)
+}
+
+// selectionToDiffDisplayRange converts the selected view rows to the diff
+// display indices (header-less, fold-less) that the staging commands expect.
+// Returns -1, -1 when nothing is selected, and ok=false when the selection
+// covers no diff line (only fold rows).
+func selectionToDiffDisplayRange(ctx *DiffViewContext) (start, end int, ok bool) {
+	start, end = *ctx.selectStart, *ctx.selectEnd
+	if start < 0 || end < 0 {
+		return -1, -1, true
+	}
+	if *ctx.isSplitView {
+		// Split rows pair '-' and '+' lines and include folds, so
+		// convert the selected rows to the diff lines they show
+		content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		return content.DiffRange(start, end)
+	}
+	// Fold rows are not diff lines, so use the diff lines the selection spans
+	if start > end {
+		start, end = end, start
+	}
+	displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+	diffStart, diffEnd := -1, -1
+	for row := start; row <= end; row++ {
+		mapped, found := displayMapping[row]
+		if !found {
+			continue
+		}
+		if diffStart < 0 {
+			diffStart = mapped
+		}
+		diffEnd = mapped
+	}
+	return diffStart, diffEnd, diffStart >= 0
+}
+
+// applyDiffChange shows newDiffText after an operation changed the file's
+// diff: it clears the selection, places the cursor near newCursorPos (a diff
+// display index) and refreshes the file list.
+func applyDiffChange(ctx *DiffViewContext, newDiffText string, newCursorPos int) {
+	*ctx.currentDiffText = newDiffText
+
+	// Deselect and update cursor position
+	*ctx.isSelecting = false
+	*ctx.selectStart = -1
+	*ctx.selectEnd = -1
+
+	// Cursor position boundary check
+	diffGone := len(strings.TrimSpace(newDiffText)) == 0
+	if *ctx.isSplitView && !diffGone {
+		// newCursorPos is a diff line index; find the row showing it
+		content := getCachedSplitContent(newDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		newCursorPos = content.RowForDiffIdx(newCursorPos)
+		if newCursorPos < 0 {
+			newCursorPos = 0
+		}
+	} else if !diffGone {
+		coloredDiff := ColorizeDiff(newDiffText)
+		diffLines := util.SplitLines(coloredDiff)
+		maxLines := len(diffLines) - 1
+		if maxLines < 0 {
+			maxLines = 0
+		}
+		if newCursorPos > maxLines {
+			newCursorPos = maxLines
+		}
+		if newCursorPos < 0 {
+			newCursorPos = 0
+		}
+	} else {
+		newCursorPos = 0
+	}
+	*ctx.cursorY = newCursorPos
+
+	// Redraw
+	if ctx.viewUpdater != nil {
+		ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
+	}
+
+	// Internally update file list
+	ctx.refreshFileList()
+
+	if diffGone {
+		// If diff is gone, fully update
+		if ctx.onUpdate != nil {
+			ctx.onUpdate()
+		}
+		return
+	}
+
+	// Save currently selected file and status
+	var currentlySelectedFile string
+	var currentlySelectedStatus string
+	if *ctx.currentSelection >= 0 && *ctx.currentSelection < len(*ctx.fileList) {
+		fileEntry := (*ctx.fileList)[*ctx.currentSelection]
+		currentlySelectedFile = fileEntry.Path
+		currentlySelectedStatus = fileEntry.StageStatus
+	}
+
+	// Redraw file list
+	ctx.updateFileListView()
+
+	// Restore selection position (search by both filename and status)
+	newSelection := -1
+	for i, fileEntry := range *ctx.fileList {
+		if fileEntry.Path == currentlySelectedFile && fileEntry.StageStatus == currentlySelectedStatus {
+			newSelection = i
+			break
+		}
+	}
+	if newSelection >= 0 {
+		*ctx.currentSelection = newSelection
+	} else if *ctx.currentSelection >= len(*ctx.fileList) {
+		*ctx.currentSelection = len(*ctx.fileList) - 1
+	}
+
+	// Update file list again if selection position changed
+	ctx.updateFileListView()
+}
+
+// discardSelectedLines reverts the selected changes in the working tree after
+// asking for confirmation. Discarded changes cannot be undone, as undo only
+// restores the index.
+func discardSelectedLines(ctx *DiffViewContext) {
+	if *ctx.currentFile == "" || len(strings.TrimSpace(*ctx.currentDiffText)) == 0 {
+		return
+	}
+	if *ctx.currentStatus == "staged" {
+		ctx.updateGlobalStatus("Cannot discard staged changes. Use 'a' to unstage first.", "tomato")
+		return
+	}
+	if !*ctx.isSelecting {
+		ctx.updateGlobalStatus("Select lines with 'V' to discard them", "yellow")
+		return
+	}
+
+	selectStart, selectEnd, ok := selectionToDiffDisplayRange(ctx)
+	if !ok || !commands.HasChangesInRange(*ctx.currentDiffText, selectStart, selectEnd) {
+		ctx.updateGlobalStatus("No changes to discard in the selection", "yellow")
+		return
+	}
+
+	file := *ctx.currentFile
+	status := *ctx.currentStatus
+	diffText := *ctx.currentDiffText
+
+	returnToDiff := func() {
+		ctx.app.SetRoot(ctx.mainView, true)
+		if *ctx.isSplitView {
+			ctx.app.SetFocus(ctx.splitViewFlex)
+		} else {
+			ctx.app.SetFocus(ctx.diffView)
+		}
+	}
+
+	modal := tview.NewModal().
+		SetText("Discard the selected changes in " + file + "?\nThis cannot be undone.").
+		AddButtons([]string{"Discard", "Cancel"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			returnToDiff()
+			if buttonLabel != "Discard" {
+				return
+			}
+
+			err := commands.DiscardSelectedLines(commands.DiscardSelectedLinesParams{
+				SelectStart:     selectStart,
+				SelectEnd:       selectEnd,
+				CurrentFile:     file,
+				CurrentDiffText: diffText,
+				RepoRoot:        ctx.repoRoot,
+			})
+			if err != nil {
+				ctx.updateGlobalStatus(err.Error(), "tomato")
+				return
+			}
+
+			var newDiffText string
+			ctx.updateCurrentDiffText(file, status, ctx.repoRoot, &newDiffText, *ctx.ignoreWhitespace)
+			applyDiffChange(ctx, newDiffText, selectStart)
+			ctx.updateGlobalStatus("Selected changes discarded", "forestgreen")
+		})
+
+	pages := tview.NewPages().
+		AddPage("main", ctx.mainView, true, true).
+		AddPage("modal", modal, true, true)
+	ctx.app.SetRoot(pages, true)
 }

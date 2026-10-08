@@ -74,6 +74,7 @@ $ giff -v         # show version
 | `gg` / `G` | Top / bottom |
 | `V` | Select lines |
 | `a` | Stage selected lines |
+| `d` | Discard selected lines (unstaged changes only, cannot be undone) |
 | `A` | Stage/unstage file |
 | `/` | Search |
 | `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
