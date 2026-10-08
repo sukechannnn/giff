@@ -27,6 +27,8 @@ type SplitViewRow struct {
 	FoldID    string // Fold identifier for fold indicator / expanded fold rows
 	FoldFixed bool   // True if the fold is always expanded and cannot be toggled
 	BgColor   string // Background color for the entire row (empty = default)
+
+	IsFoldIndicator bool // True for a collapsed fold's "... lines hidden" row
 }
 
 // splitHunk holds the position of a hunk header within the diff body
@@ -273,7 +275,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 		}
 		indicator := fmt.Sprintf("[dimgray]... %d lines hidden (press 'e' to expand) ...[-]", fold.LineCount)
 		blank := strings.Repeat(" ", maxDigits)
-		addRow(indicator, blank, indicator, blank, SplitViewRow{DiffStart: -1, DiffEnd: -1, FoldID: fold.ID})
+		addRow(indicator, blank, indicator, blank, SplitViewRow{DiffStart: -1, DiffEnd: -1, FoldID: fold.ID, IsFoldIndicator: true})
 	}
 
 	if topFold != nil {

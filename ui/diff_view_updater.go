@@ -72,22 +72,32 @@ func (u *UnifiedViewUpdater) UpdateWithSelection(diffText string, cursorY int, s
 
 // SplitViewUpdater implements DiffViewUpdater for split diff view
 type SplitViewUpdater struct {
-	beforeView *tview.TextView
-	afterView  *tview.TextView
-	foldState  *FoldState
-	filePath   *string
-	repoRoot   string
+	beforeView  *tview.TextView
+	afterView   *tview.TextView
+	foldState   *FoldState
+	filePath    *string
+	repoRoot    string
+	searchQuery *string // search query (for character-level highlighting)
 }
 
 // NewSplitViewUpdater creates a new SplitViewUpdater
-func NewSplitViewUpdater(beforeView, afterView *tview.TextView, foldState *FoldState, filePath *string, repoRoot string) *SplitViewUpdater {
+func NewSplitViewUpdater(beforeView, afterView *tview.TextView, foldState *FoldState, filePath *string, repoRoot string, searchQuery *string) *SplitViewUpdater {
 	return &SplitViewUpdater{
-		beforeView: beforeView,
-		afterView:  afterView,
-		foldState:  foldState,
-		filePath:   filePath,
-		repoRoot:   repoRoot,
+		beforeView:  beforeView,
+		afterView:   afterView,
+		foldState:   foldState,
+		filePath:    filePath,
+		repoRoot:    repoRoot,
+		searchQuery: searchQuery,
 	}
+}
+
+// query returns the current search query, or "" without one
+func (s *SplitViewUpdater) query() string {
+	if s.searchQuery == nil {
+		return ""
+	}
+	return *s.searchQuery
 }
 
 // UpdateWithoutCursor updates split view without cursor
@@ -96,7 +106,7 @@ func (s *SplitViewUpdater) UpdateWithoutCursor(diffText string) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, -1, -1, -1, false, s.foldState, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, -1, -1, -1, false, s.foldState, filePath, s.repoRoot, "")
 }
 
 // UpdateWithCursor updates split view with cursor
@@ -105,7 +115,7 @@ func (s *SplitViewUpdater) UpdateWithCursor(diffText string, cursorY int) {
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, -1, -1, false, s.foldState, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, -1, -1, false, s.foldState, filePath, s.repoRoot, s.query())
 }
 
 // UpdateWithSelection updates split view with selection
@@ -114,7 +124,7 @@ func (s *SplitViewUpdater) UpdateWithSelection(diffText string, cursorY int, sel
 	if s.filePath != nil {
 		filePath = *s.filePath
 	}
-	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, s.foldState, filePath, s.repoRoot)
+	renderSplitView(s.beforeView, s.afterView, diffText, cursorY, selectStart, selectEnd, isSelecting, s.foldState, filePath, s.repoRoot, s.query())
 }
 
 // ----------↓↓↓ unified_view_functions ↓↓↓----------
@@ -183,7 +193,7 @@ func renderUnifiedView(diffView *tview.TextView, diffText string, cursorY int, s
 
 		// Apply character-level highlighting if search query exists
 		lineContent := line.Content
-		if searchQuery != "" {
+		if searchQuery != "" && !line.IsFoldIndicator {
 			lineContent = highlightSearchInTaggedText(lineContent, searchQuery)
 		}
 
@@ -257,15 +267,22 @@ func getSplitViewLineCount(diffText string, foldState *FoldState, filePath, repo
 }
 
 func updateSplitViewWithoutCursor(beforeView, afterView *tview.TextView, diffText string, foldState *FoldState, filePath, repoRoot string) {
-	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, foldState, filePath, repoRoot)
+	renderSplitView(beforeView, afterView, diffText, -1, -1, -1, false, foldState, filePath, repoRoot, "")
+}
+
+// updateSplitViewHighlighted renders the split view with the given query
+// highlighted, used while the file list still holds the focus and a diff grep
+// is narrowing it.
+func updateSplitViewHighlighted(beforeView, afterView *tview.TextView, diffText string, cursorY int, foldState *FoldState, filePath, repoRoot, searchQuery string) {
+	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot, searchQuery)
 }
 
 // updateSplitViewWithCursor updates split view with cursor
 func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText string, cursorY int, foldState *FoldState, filePath, repoRoot string) {
-	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot)
+	renderSplitView(beforeView, afterView, diffText, cursorY, -1, -1, false, foldState, filePath, repoRoot, "")
 }
 
-func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, foldState *FoldState, filePath, repoRoot string) {
+func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, foldState *FoldState, filePath, repoRoot string, searchQuery string) {
 	beforeView.Clear()
 	afterView.Clear()
 
@@ -283,45 +300,8 @@ func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cur
 	}
 
 	// Update display
-	for i, line := range beforeLines {
-		// Add line number
-		lineNum := beforeLineNums[i] + " │ "
-
-		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
-			// Selected line: replace background with dimgrey
-			highlighted := util.ReplaceBackground(line, "dimgrey")
-			beforeView.Write([]byte("[white:dimgrey]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
-		} else if cursorIndex >= 0 && i == cursorIndex {
-			// Cursor line: replace background with blue
-			highlighted := util.ReplaceBackground(line, "blue")
-			beforeView.Write([]byte("[white:blue]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
-		} else if bg := content.Rows[i].BgColor; bg != "" {
-			// Expanded fold row: fill the whole row like unified view does
-			beforeView.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + line + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
-		} else {
-			beforeView.Write([]byte("[dimgray]" + lineNum + "[-]" + line + "\n"))
-		}
-	}
-
-	for i, line := range afterLines {
-		// Add line number
-		lineNum := afterLineNums[i] + " │ "
-
-		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
-			// Selected line: replace background with dimgrey
-			highlighted := util.ReplaceBackground(line, "dimgrey")
-			afterView.Write([]byte("[white:dimgrey]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
-		} else if cursorIndex >= 0 && i == cursorIndex {
-			// Cursor line: replace background with blue
-			highlighted := util.ReplaceBackground(line, "blue")
-			afterView.Write([]byte("[white:blue]" + lineNum + "[-:-]" + highlighted + "[-:-]\n"))
-		} else if bg := content.Rows[i].BgColor; bg != "" {
-			// Expanded fold row: fill the whole row like unified view does
-			afterView.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + line + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
-		} else {
-			afterView.Write([]byte("[dimgray]" + lineNum + "[-]" + line + "\n"))
-		}
-	}
+	writeSplitSide(beforeView, beforeLines, beforeLineNums, content.Rows, cursorIndex, selectStart, selectEnd, isSelecting, searchQuery)
+	writeSplitSide(afterView, afterLines, afterLineNums, content.Rows, cursorIndex, selectStart, selectEnd, isSelecting, searchQuery)
 
 	// Synchronize scroll position
 	if cursorIndex >= 0 {
@@ -343,6 +323,39 @@ func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cur
 		// Without cursor, scroll to top
 		beforeView.ScrollTo(0, 0)
 		afterView.ScrollTo(0, 0)
+	}
+}
+
+// writeSplitSide writes one side of the split view, highlighting searchQuery
+// matches so they stay visible on the cursor, selected and fold rows too
+func writeSplitSide(view *tview.TextView, lines, lineNums []string, rows []SplitViewRow, cursorIndex, selectStart, selectEnd int, isSelecting bool, searchQuery string) {
+	preserve := []string{util.SearchHighlightBg}
+	fill := func(line, bg string) string {
+		if searchQuery != "" {
+			return util.ReplaceBackgroundPreserving(line, bg, preserve)
+		}
+		return util.ReplaceBackground(line, bg)
+	}
+
+	for i, line := range lines {
+		// Add line number
+		lineNum := lineNums[i] + " │ "
+		if searchQuery != "" && !rows[i].IsFoldIndicator {
+			line = highlightSearchInTaggedText(line, searchQuery)
+		}
+
+		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
+			// Selected line: replace background with dimgrey
+			view.Write([]byte("[white:dimgrey]" + lineNum + "[-:-]" + fill(line, "dimgrey") + "[-:-]\n"))
+		} else if cursorIndex >= 0 && i == cursorIndex {
+			// Cursor line: replace background with blue
+			view.Write([]byte("[white:blue]" + lineNum + "[-:-]" + fill(line, "blue") + "[-:-]\n"))
+		} else if bg := rows[i].BgColor; bg != "" {
+			// Expanded fold row: fill the whole row like unified view does
+			view.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + fill(line, bg) + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
+		} else {
+			view.Write([]byte("[dimgray]" + lineNum + "[-]" + line + "\n"))
+		}
 	}
 }
 

@@ -612,8 +612,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		if currentDiffText == "" {
 			return
 		}
-		content := getCachedUnifiedContent(currentDiffText, foldState, currentFile, repoRoot)
-		searchMatches = searchInUnifiedContent(content, searchQuery)
+		searchMatches = findSearchMatches(currentDiffText, isSplitView, foldState, currentFile, repoRoot, searchQuery)
 		if len(searchMatches) > 0 {
 			searchMatchIndex = 0
 			cursorY = searchMatches[0]
@@ -717,8 +716,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		updateCurrentDiffText(file, status, repoRoot, &currentDiffText, ignoreWhitespace)
 		applyGrepSearchToDiff()
 
-		if isSplitView {
-			// The split view has no search highlighting to carry over.
+		if isSplitView && diffGrepQuery != "" {
+			// Show where the grep matched, scrolling to the first match.
+			updateSplitViewHighlighted(beforeView, afterView, currentDiffText, cursorY, foldState, currentFile, repoRoot, searchQuery)
+		} else if isSplitView {
 			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, foldState, currentFile, repoRoot)
 		} else if diffGrepQuery != "" {
 			// Show where the grep matched, scrolling to the first match.

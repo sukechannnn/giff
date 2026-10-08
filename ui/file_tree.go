@@ -1299,26 +1299,38 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			case 's':
 				// Toggle split view
 				*ctx.isSplitView = !*ctx.isSplitView
+				dctx := ctx.diffViewContext
+				foldState := dctx.foldState
+
+				// A search (a '/' grep) stays highlighted, its matches found
+				// again on the other view's rows
+				refreshSearchMatches(dctx)
+				query := *dctx.searchQuery
 
 				if *ctx.isSplitView {
 					// Show split view
-					updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.diffViewContext.foldState, *ctx.currentFile, ctx.repoRoot)
+					if query != "" {
+						updateSplitViewHighlighted(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, *dctx.cursorY, foldState, *ctx.currentFile, ctx.repoRoot, query)
+					} else {
+						updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, foldState, *ctx.currentFile, ctx.repoRoot)
+					}
 					ctx.contentFlex.RemoveItem(ctx.unifiedViewFlex)
 					ctx.contentFlex.AddItem(ctx.splitViewFlex, 0, DiffViewFlexRatio, false)
 					// Update viewUpdater for split view
-					if ctx.diffViewContext != nil {
-						ctx.diffViewContext.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.diffViewContext.foldState, ctx.currentFile, ctx.repoRoot)
-					}
+					dctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, foldState, ctx.currentFile, ctx.repoRoot, dctx.searchQuery)
 				} else {
 					// Return to normal diff view
 					ctx.contentFlex.RemoveItem(ctx.splitViewFlex)
 					ctx.contentFlex.AddItem(ctx.unifiedViewFlex, 0, DiffViewFlexRatio, false)
-					foldState := ctx.diffViewContext.foldState
-					updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, foldState, *ctx.currentFile, ctx.repoRoot)
-					// Update viewUpdater for unified view
-					if ctx.diffViewContext != nil {
-						ctx.diffViewContext.viewUpdater = NewUnifiedViewUpdater(ctx.diffView, foldState, ctx.currentFile, ctx.repoRoot)
+					if query != "" {
+						updateDiffViewHighlighted(ctx.diffView, *ctx.currentDiffText, *dctx.cursorY, foldState, *ctx.currentFile, ctx.repoRoot, query)
+					} else {
+						updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, foldState, *ctx.currentFile, ctx.repoRoot)
 					}
+					// Update viewUpdater for unified view
+					updater := NewUnifiedViewUpdater(ctx.diffView, foldState, ctx.currentFile, ctx.repoRoot)
+					updater.searchQuery = dctx.searchQuery
+					dctx.viewUpdater = updater
 				}
 				return nil
 			case 'y': // copy filename only

@@ -259,7 +259,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 	// Set viewUpdater in initial state
 	if ctx.viewUpdater == nil {
 		if *ctx.isSplitView {
-			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot)
+			ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot, ctx.searchQuery)
 		} else {
 			ctx.viewUpdater = &UnifiedViewUpdater{
 				diffView:    ctx.diffView,
@@ -392,10 +392,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			case 's':
 				// Toggle split view
 				*ctx.isSplitView = !*ctx.isSplitView
+				refreshSearchMatches(ctx)
 
 				if *ctx.isSplitView {
 					// Show split view (maintain current cursor position)
-					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot)
+					ctx.viewUpdater = NewSplitViewUpdater(ctx.beforeView, ctx.afterView, ctx.foldState, ctx.currentFile, ctx.repoRoot, ctx.searchQuery)
 					ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 					ctx.contentFlex.RemoveItem(ctx.unifiedViewFlex)
 					ctx.contentFlex.AddItem(ctx.splitViewFlex, 0, DiffViewFlexRatio, false)
@@ -1169,12 +1170,69 @@ func searchInUnifiedContent(content *UnifiedViewContent, query string) []int {
 	var matches []int
 	needle := strings.ToLower(query)
 	for i, line := range content.Lines {
+		// A fold indicator's words are not file content
+		if line.IsFoldIndicator {
+			continue
+		}
 		plain := stripTviewTags(line.LineNumber + line.Content)
 		if strings.Contains(strings.ToLower(plain), needle) {
 			matches = append(matches, i)
 		}
 	}
 	return matches
+}
+
+// searchInSplitContent searches for query in split view content and returns
+// the matching row indices: a row matches when either side does.
+// Matching is case-insensitive, as in searchInUnifiedContent.
+func searchInSplitContent(content *SplitViewContent, query string) []int {
+	var matches []int
+	needle := strings.ToLower(query)
+	for i := range content.BeforeLines {
+		// A fold indicator's words are not file content
+		if content.Rows[i].IsFoldIndicator {
+			continue
+		}
+		before := stripTviewTags(content.BeforeLineNums[i] + content.BeforeLines[i])
+		after := stripTviewTags(content.AfterLineNums[i] + content.AfterLines[i])
+		if strings.Contains(strings.ToLower(before), needle) || strings.Contains(strings.ToLower(after), needle) {
+			matches = append(matches, i)
+		}
+	}
+	return matches
+}
+
+// findSearchMatches returns the rows of the current view (unified or split)
+// that match query
+func findSearchMatches(diffText string, isSplitView bool, foldState *FoldState, filePath, repoRoot, query string) []int {
+	if isSplitView {
+		return searchInSplitContent(getCachedSplitContent(diffText, foldState, filePath, repoRoot), query)
+	}
+	return searchInUnifiedContent(getCachedUnifiedContent(diffText, foldState, filePath, repoRoot), query)
+}
+
+// refreshSearchMatches recomputes the active search's matches for the current
+// view after switching between unified and split view, whose rows differ, and
+// puts the cursor on the match it was at.
+func refreshSearchMatches(ctx *DiffViewContext) {
+	if ctx.searchQuery == nil || *ctx.searchQuery == "" || ctx.searchMatches == nil {
+		return
+	}
+	matches := findSearchMatches(*ctx.currentDiffText, *ctx.isSplitView, ctx.foldState, *ctx.currentFile, ctx.repoRoot, *ctx.searchQuery)
+	*ctx.searchMatches = matches
+	if len(matches) == 0 {
+		*ctx.searchMatchIndex = -1
+		return
+	}
+	idx := *ctx.searchMatchIndex
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(matches) {
+		idx = len(matches) - 1
+	}
+	*ctx.searchMatchIndex = idx
+	*ctx.cursorY = matches[idx]
 }
 
 // nearestInMap returns the value of the entry whose key is closest to idx,
@@ -1265,8 +1323,7 @@ func performSearch(ctx *DiffViewContext) {
 	// Also update searchQuery to apply real-time search highlighting
 	*ctx.searchQuery = query
 
-	content := getCachedUnifiedContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-	matches := searchInUnifiedContent(content, query)
+	matches := findSearchMatches(*ctx.currentDiffText, *ctx.isSplitView, ctx.foldState, *ctx.currentFile, ctx.repoRoot, query)
 	*ctx.searchMatches = matches
 
 	if len(matches) > 0 {

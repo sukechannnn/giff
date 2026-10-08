@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rivo/tview"
+	"github.com/sukechannnn/giff/util"
 )
 
 func TestGenerateSplitViewContent(t *testing.T) {
@@ -500,6 +503,48 @@ func TestSplitViewDoesNotPairAcrossHunks(t *testing.T) {
 		after := stripTviewTags(content.AfterLines[i])
 		if before == "-b" && after == "+Y" {
 			t.Fatalf("'-b' and '+Y' from different hunks were paired on row %d", i)
+		}
+	}
+}
+
+func TestSearchInSplitContent(t *testing.T) {
+	oldLineMap, newLineMap := createLineNumberMapping(splitFoldDiff)
+	content := generateSplitViewContent(splitFoldDiff, oldLineMap, newLineMap, nil, "", "")
+
+	// "l10" is on the '-' side of the paired row only; a row matches when either side does
+	pair := findSplitRow(content, "X")
+	got := searchInSplitContent(content, "L10")
+	if len(got) != 1 || got[0] != pair {
+		t.Errorf("searchInSplitContent(L10): got %v, want [%d]", got, pair)
+	}
+
+	// "x" is only on the '+' side of the same row
+	got = searchInSplitContent(content, "x")
+	if len(got) != 1 || got[0] != pair {
+		t.Errorf("searchInSplitContent(x): got %v, want [%d]", got, pair)
+	}
+}
+
+func TestWriteSplitSideHighlightsSearch(t *testing.T) {
+	oldLineMap, newLineMap := createLineNumberMapping(splitFoldDiff)
+	content := generateSplitViewContent(splitFoldDiff, oldLineMap, newLineMap, nil, "", "")
+	pair := findSplitRow(content, "X")
+	l9 := findSplitRow(content, " l9")
+	highlight := "[:" + util.SearchHighlightBg + "]"
+
+	for _, cursor := range []int{-1, pair, l9} {
+		view := tview.NewTextView().SetDynamicColors(true)
+		writeSplitSide(view, content.BeforeLines, content.BeforeLineNums, content.Rows, cursor, -1, -1, false, "l1")
+		rows := strings.Split(view.GetText(false), "\n")
+
+		// "l10" on the '-' side of the pair row, "l1" in the context row "l11"
+		for _, row := range []int{pair, findSplitRow(content, " l11")} {
+			if !strings.Contains(rows[row], highlight) {
+				t.Errorf("cursor %d: row %d is not highlighted: %q", cursor, row, rows[row])
+			}
+		}
+		if strings.Contains(rows[l9], highlight) {
+			t.Errorf("cursor %d: row l9 has no match but is highlighted: %q", cursor, rows[l9])
 		}
 	}
 }
