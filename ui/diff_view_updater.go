@@ -180,12 +180,15 @@ func renderUnifiedView(diffView *tview.TextView, diffText string, cursorY int, s
 	for i, line := range content.Lines {
 		var bg string
 		var lineNumFg string
+		highlightedRow := false // the cursor or a selected row
 		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
 			bg = "dimgrey"
 			lineNumFg = string(util.MainTextColor)
+			highlightedRow = true
 		} else if i == cursorY {
 			bg = string(util.CursorLineColor)
 			lineNumFg = string(util.MainTextColor)
+			highlightedRow = true
 		} else if line.BgColor != "" {
 			bg = line.BgColor
 			lineNumFg = "dimgray"
@@ -204,6 +207,9 @@ func renderUnifiedView(diffView *tview.TextView, diffText string, cursorY int, s
 				highlighted = util.ReplaceBackgroundPreserving(lineContent, bg, []string{util.SearchHighlightBg})
 			} else {
 				highlighted = util.ReplaceBackground(lineContent, bg)
+			}
+			if highlightedRow {
+				highlighted = util.EnsureReadableForeground(highlighted, bg)
 			}
 			diffView.Write([]byte("[" + lineNumFg + ":" + bg + "]" + lineNum + highlighted + strings.Repeat(" ", 500) + "[-:-]\n"))
 		} else {
@@ -336,6 +342,10 @@ func writeSplitSide(view *tview.TextView, lines, lineNums []string, rows []Split
 		}
 		return util.ReplaceBackground(line, bg)
 	}
+	// The cursor and selected rows also keep their text readable
+	fillReadable := func(line, bg string) string {
+		return util.EnsureReadableForeground(fill(line, bg), bg)
+	}
 
 	for i, line := range lines {
 		// Add line number
@@ -346,11 +356,11 @@ func writeSplitSide(view *tview.TextView, lines, lineNums []string, rows []Split
 
 		if isSelecting && isLineSelected(i, selectStart, selectEnd) {
 			// Selected line: replace background with dimgrey
-			view.Write([]byte("[" + string(util.MainTextColor) + ":dimgrey]" + lineNum + "[-:-]" + fill(line, "dimgrey") + "[-:-]\n"))
+			view.Write([]byte("[" + string(util.MainTextColor) + ":dimgrey]" + lineNum + "[-:-]" + fillReadable(line, "dimgrey") + "[-:-]\n"))
 		} else if cursorIndex >= 0 && i == cursorIndex {
 			// Cursor line: replace background with the cursor color
 			cursorBg := string(util.CursorLineColor)
-			view.Write([]byte("[" + string(util.MainTextColor) + ":" + cursorBg + "]" + lineNum + "[-:-]" + fill(line, cursorBg) + "[-:-]\n"))
+			view.Write([]byte("[" + string(util.MainTextColor) + ":" + cursorBg + "]" + lineNum + "[-:-]" + fillReadable(line, cursorBg) + "[-:-]\n"))
 		} else if bg := rows[i].BgColor; bg != "" {
 			// Expanded fold row: fill the whole row like unified view does
 			view.Write([]byte("[dimgray:" + bg + "]" + lineNum + "[-:-]" + fill(line, bg) + "[:" + bg + "]" + strings.Repeat(" ", 500) + "[-:-]\n"))
@@ -514,6 +524,7 @@ func renderFileView(diffView *tview.TextView, content string, cursorY int, selec
 			if searchQuery != "" {
 				highlighted = util.ReplaceBackgroundPreserving(lineContent, bg, []string{util.SearchHighlightBg})
 			}
+			highlighted = util.EnsureReadableForeground(highlighted, bg)
 			diffView.Write([]byte("[" + lineNumFg + ":" + bg + "]" + fmt.Sprintf("%*d │ ", maxDigits, i+1) + highlighted + strings.Repeat(" ", 500) + "[-:-]\n"))
 		} else {
 			diffView.Write([]byte(lineNum + lineContent + "\n"))
