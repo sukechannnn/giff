@@ -875,14 +875,7 @@ func applyDiffGrep(ctx *FileListKeyContext) {
 	ctx.updateFileListView()
 
 	// Expand every directory so all surviving files are visible.
-	if ctx.dirCollapseState != nil {
-		for _, entry := range *ctx.fileList {
-			if entry.IsDirectory {
-				ctx.dirCollapseState.SetCollapsed(entry.StageStatus, entry.Path, false)
-			}
-		}
-		ctx.updateFileListView()
-	}
+	expandAllDirectories(ctx)
 
 	hasFile := false
 	for _, entry := range *ctx.fileList {
@@ -906,6 +899,28 @@ func applyDiffGrep(ctx *FileListKeyContext) {
 	showNarrowingStatus(ctx)
 }
 
+// expandAllDirectories opens every directory of the file list. A collapsed
+// directory hides the directories inside it, so each pass rebuilds the list
+// and opens the ones it reveals, until none is left collapsed.
+func expandAllDirectories(ctx *FileListKeyContext) {
+	if ctx.dirCollapseState == nil {
+		return
+	}
+	for {
+		expanded := false
+		for _, entry := range *ctx.fileList {
+			if entry.IsDirectory && ctx.dirCollapseState.IsCollapsed(entry.StageStatus, entry.Path) {
+				ctx.dirCollapseState.SetCollapsed(entry.StageStatus, entry.Path, false)
+				expanded = true
+			}
+		}
+		if !expanded {
+			return
+		}
+		ctx.updateFileListView()
+	}
+}
+
 // applyFileFilter updates the file list selection to match the filter query
 func applyFileFilter(ctx *FileListKeyContext) {
 	if ctx.filterInput == "" {
@@ -921,15 +936,7 @@ func applyFileFilter(ctx *FileListKeyContext) {
 	ctx.updateFileListView()
 
 	// Expand all directories in the filtered result
-	if ctx.dirCollapseState != nil {
-		for _, entry := range *ctx.fileList {
-			if entry.IsDirectory {
-				ctx.dirCollapseState.SetCollapsed(entry.StageStatus, entry.Path, false)
-			}
-		}
-		// Rebuild again with directories expanded
-		ctx.updateFileListView()
-	}
+	expandAllDirectories(ctx)
 
 	// Move to the first file that survived the filter
 	firstMatch := -1
