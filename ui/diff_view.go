@@ -96,6 +96,13 @@ type DiffViewContext struct {
 	toggleFileView        func()          // if non-nil, 'f' switches between the diff and the whole file
 	restoreStatus         func()          // if non-nil, restores this view's status instead of the main view's
 	resizeFileList        func(delta int) // resize file list width
+
+	// Word cursor: 'n' / 'N' step through the words of the cursor row while no
+	// search is active, searching for the word they land on, and Enter jumps
+	// to its next match
+	word     wordSpan
+	wordRow  int    // the row the word is on
+	wordFile string // the file the word is in
 }
 
 // applyUndoRedoInDiffView runs the given undo/redo action and refreshes both
@@ -319,8 +326,23 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			return nil
 		}
 
+		// Any key other than the word cursor's own turns it off
+		if wordCursorActive(ctx) {
+			// Scrolling keeps it too, so the search can be looked over
+			wordKey := event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyEsc ||
+				event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyCtrlY ||
+				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N'))
+			if !wordKey {
+				clearWordCursor(ctx)
+			}
+		}
+
 		switch event.Key() {
 		case tcell.KeyEsc:
+			if wordCursorActive(ctx) {
+				clearWordCursor(ctx)
+				return nil
+			}
 			// If search results exist, first Esc clears them
 			if *ctx.searchQuery != "" {
 				*ctx.searchQuery = ""
@@ -353,6 +375,10 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			ctx.app.SetFocus(ctx.fileListView)
 			return nil
 		case tcell.KeyEnter:
+			if wordCursorActive(ctx) {
+				nextWordMatch(ctx)
+				return nil
+			}
 			// Return to left pane
 			*ctx.isSelecting = false
 			*ctx.selectStart = -1
@@ -370,11 +396,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			return nil
 		case tcell.KeyCtrlE:
 			// Ctrl+E: scroll down one line (cursor follows when at top)
-			scrollDiffView(ctx, 1)
+			scrollKeepingWordCursor(ctx, 1)
 			return nil
 		case tcell.KeyCtrlY:
 			// Ctrl+Y: scroll up one line
-			scrollDiffView(ctx, -1)
+			scrollKeepingWordCursor(ctx, -1)
 			return nil
 		case tcell.KeyTab:
 			moveCursorDown(ctx)
@@ -729,15 +755,19 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				ctx.setGlobalStatusText("[white]/[-]")
 				return nil
 			case 'n':
-				// Move to next match
-				if *ctx.searchQuery != "" {
+				// Move to next match, or without a search to the next word
+				if *ctx.searchQuery != "" && !wordCursorActive(ctx) {
 					moveToNextMatch(ctx)
+				} else if !*ctx.isSelecting {
+					moveWordCursor(ctx, 1)
 				}
 				return nil
 			case 'N':
-				// Move to previous match
-				if *ctx.searchQuery != "" {
+				// Move to previous match, or without a search to the previous word
+				if *ctx.searchQuery != "" && !wordCursorActive(ctx) {
 					moveToPrevMatch(ctx)
+				} else if !*ctx.isSelecting {
+					moveWordCursor(ctx, -1)
 				}
 				return nil
 			case 'u':
