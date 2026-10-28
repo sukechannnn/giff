@@ -173,3 +173,26 @@ func TestScrollKeepsWordCursor(t *testing.T) {
 		t.Errorf("Enter after Ctrl+E = row %d at %d, want row 1 at 5 (its \"foo\")", *ctx.cursorY, ctx.word.start)
 	}
 }
+
+// Ctrl+Y leaves a cursor that is still on screen where it is, however tall
+// the pane is, and drags along only one that would fall off its bottom.
+func TestScrollUpKeepsVisibleCursor(t *testing.T) {
+	diff := "diff --git a/f.go b/f.go\n--- a/f.go\n+++ b/f.go\n@@ -1,60 +1,60 @@\n"
+	for i := 0; i < 60; i++ {
+		diff += " line\n"
+	}
+
+	for _, tt := range []struct{ cursor, want int }{
+		{35, 35}, // well inside the 40-row pane
+		{48, 47}, // on the lowest row the pane keeps the cursor on
+	} {
+		ctx := newWordCursorContext(diff)
+		ctx.diffView.SetRect(0, 0, 80, 40)
+		*ctx.cursorY = tt.cursor
+		ctx.diffView.ScrollTo(10, 0)
+		scrollDiffView(ctx, -1)
+		if row, _ := ctx.diffView.GetScrollOffset(); row != 9 || *ctx.cursorY != tt.want {
+			t.Errorf("cursor %d: Ctrl+Y = scroll %d, cursor %d; want scroll 9, cursor %d", tt.cursor, row, *ctx.cursorY, tt.want)
+		}
+	}
+}

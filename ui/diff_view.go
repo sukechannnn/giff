@@ -205,6 +205,14 @@ func moveCursorUp(ctx *DiffViewContext) {
 	}
 }
 
+// scrollBottomRow returns the lowest row the cursor can be on with the view
+// scrolled to topRow. The renderers scroll down once the cursor reaches the
+// last visible row, so that row is left out.
+func scrollBottomRow(view *tview.TextView, topRow int) int {
+	_, _, _, height := view.GetInnerRect()
+	return topRow + max(height-2, 0)
+}
+
 // scrollDiffView scrolls the diff view by the specified direction and handles cursor following
 func scrollDiffView(ctx *DiffViewContext, direction int) {
 	if *ctx.isSplitView {
@@ -224,9 +232,9 @@ func scrollDiffView(ctx *DiffViewContext, direction int) {
 				if ctx.viewUpdater != nil {
 					ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
 				}
-			} else if direction < 0 && *ctx.cursorY > nextRow+20 {
-				// Scrolling up: follow if cursor is at the bottom of the screen (assuming 20 lines height)
-				*ctx.cursorY = nextRow + 20
+			} else if bottom := scrollBottomRow(ctx.beforeView, nextRow); direction < 0 && *ctx.cursorY > bottom {
+				// Scrolling up: follow if cursor goes off the bottom of the screen
+				*ctx.cursorY = bottom
 				if *ctx.cursorY >= maxLines {
 					*ctx.cursorY = maxLines - 1
 				}
@@ -252,9 +260,9 @@ func scrollDiffView(ctx *DiffViewContext, direction int) {
 				if ctx.viewUpdater != nil {
 					ctx.viewUpdater.UpdateWithSelection(*ctx.currentDiffText, *ctx.cursorY, *ctx.selectStart, *ctx.selectEnd, *ctx.isSelecting)
 				}
-			} else if direction < 0 && *ctx.cursorY > nextRow+20 {
-				// Scrolling up: follow if cursor is at the bottom of the screen (assuming 20 lines height)
-				*ctx.cursorY = nextRow + 20
+			} else if bottom := scrollBottomRow(ctx.diffView, nextRow); direction < 0 && *ctx.cursorY > bottom {
+				// Scrolling up: follow if cursor goes off the bottom of the screen
+				*ctx.cursorY = bottom
 				if *ctx.cursorY >= maxLines {
 					*ctx.cursorY = maxLines - 1
 				}
