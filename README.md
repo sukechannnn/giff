@@ -95,6 +95,7 @@ $ giff -v         # show version
 | `w` | Hide whitespace |
 | `y` | Yank lines |
 | `Y` | Copy file path |
+| `f` | Show the whole file at the cursor (`f` again returns to the diff) |
 | `Ctrl+L` | Copy `path:line` |
 | `pr` | PR diff |
 | `Ctrl+E` / `Ctrl+Y` | Scroll |
@@ -102,6 +103,7 @@ $ giff -v         # show version
 | `q` | Quit |
 
 The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, and opening the Git log or the PR diff. In the PR diff, `r` reloads it after new commits.
+The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, showing the whole file (`f`), and opening the Git log or the PR diff. In the PR diff, `r` reloads it after new commits.
 
 ## License
 

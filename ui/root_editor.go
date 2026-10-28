@@ -402,12 +402,40 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		)
 	}
 
+	// scrollToSelection scrolls the file list just enough to show the selected
+	// line, from the scroll offset the list had before it was redrawn
+	scrollToSelection := func(currentRow, currentCol int) {
+		actualLine, exists := lineNumberMap[currentSelection]
+		if !exists {
+			return
+		}
+		_, _, _, height := fileListView.GetInnerRect()
+
+		// If selected line is below the screen
+		if actualLine >= currentRow+height-1 {
+			fileListView.ScrollTo(actualLine-height+2, currentCol)
+		} else if actualLine < currentRow {
+			// If selected line is above the screen
+			// For the first file (currentSelection == 0), scroll to top to show header
+			if currentSelection == 0 {
+				fileListView.ScrollTo(0, currentCol)
+			} else {
+				fileListView.ScrollTo(actualLine, currentCol)
+			}
+		} else {
+			// If selected line is within visible range, maintain current scroll position
+			fileListView.ScrollTo(currentRow, currentCol)
+		}
+	}
+
 	// Update initial display
 	updateFileListView := func() {
 		// File browser mode: use browser content
 		if isFileBrowserMode {
+			currentRow, currentCol := fileListView.GetScrollOffset()
 			fileListView.Clear()
 			fileListView.SetText(buildBrowserContent(leftPaneFocused && !browserFilterMode))
+			scrollToSelection(currentRow, currentCol)
 			return
 		}
 
@@ -430,25 +458,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			fileListView.ScrollTo(currentRow, currentCol)
 		} else {
 			// During normal operation, scroll to keep selected line visible
-			if actualLine, exists := lineNumberMap[currentSelection]; exists {
-				_, _, _, height := fileListView.GetInnerRect()
-
-				// If selected line is below the screen
-				if actualLine >= currentRow+height-1 {
-					fileListView.ScrollTo(actualLine-height+2, currentCol)
-				} else if actualLine < currentRow {
-					// If selected line is above the screen
-					// For the first file (currentSelection == 0), scroll to top to show header
-					if currentSelection == 0 {
-						fileListView.ScrollTo(0, currentCol)
-					} else {
-						fileListView.ScrollTo(actualLine, currentCol)
-					}
-				} else {
-					// If selected line is within visible range, maintain current scroll position
-					fileListView.ScrollTo(currentRow, currentCol)
-				}
-			}
+			scrollToSelection(currentRow, currentCol)
 		}
 	}
 
@@ -1015,17 +1025,25 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		return false
 	}
 
-	// Set toggleFileBrowser after fileListKeyContext is created (needs reference)
-	fileListKeyContext.toggleFileBrowser = func() {
-		if isFileBrowserMode {
-			// Exit file browser mode
-			isFileBrowserMode = false
-			browserRoot = repoRoot
-			fileListKeyContext.dirCollapseState = dirCollapseState
-			fileListKeyContext.filterQuery = &fileFilterQuery
-			fileListKeyContext.isFilterMode = &fileFilterMode
-			fileListView.SetTitle("j/k: navigate, Enter: switch to diff")
-			// Restore diff view updater
+	// What the diff view showed before the file browser opened, so that
+	// leaving the browser lands on the same file and line again
+	var selectionBeforeBrowser FileEntry
+	var cursorBeforeBrowser int
+	var splitBeforeBrowser bool
+
+	exitFileBrowser := func() {
+		isFileBrowserMode = false
+		browserRoot = repoRoot
+		fileListKeyContext.dirCollapseState = dirCollapseState
+		fileListKeyContext.filterQuery = &fileFilterQuery
+		fileListKeyContext.isFilterMode = &fileFilterMode
+		fileListView.SetTitle("j/k: navigate, Enter: switch to diff")
+		// Restore diff view updater
+		if splitBeforeBrowser {
+			isSplitView = true
+			diffViewContext.viewUpdater = NewSplitViewUpdater(beforeView, afterView, foldState, &currentFile, repoRoot, &searchQuery)
+			rebuildContentFlex()
+		} else {
 			diffViewContext.viewUpdater = &UnifiedViewUpdater{
 				diffView:    diffView,
 				foldState:   foldState,
@@ -1033,57 +1051,146 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				repoRoot:    repoRoot,
 				searchQuery: &searchQuery,
 			}
-			updateFileListView()
-			updateSelectedFileDiff()
-			if restoreStatusFunc != nil {
-				restoreStatusFunc()
+		}
+		updateFileListView()
+		for i, entry := range fileList {
+			if entry.Path == selectionBeforeBrowser.Path && entry.StageStatus == selectionBeforeBrowser.StageStatus && entry.IsDirectory == selectionBeforeBrowser.IsDirectory {
+				currentSelection = i
+				break
 			}
-		} else {
-			// Enter file browser mode
-			browserRoot = repoRoot
-			allFiles, err := git.GetAllTrackedFiles(repoRoot)
-			if err != nil {
-				updateGlobalStatus("Failed to get file list: "+err.Error(), "tomato")
+		}
+		updateFileListView()
+		updateSelectedFileDiff()
+		if !leftPaneFocused {
+			cursorY = cursorBeforeBrowser
+			if diffViewContext.viewUpdater != nil {
+				diffViewContext.viewUpdater.UpdateWithCursor(currentDiffText, cursorY)
+			}
+			if isSplitView {
+				app.SetFocus(splitViewFlex)
+			} else {
+				app.SetFocus(diffView)
+			}
+		}
+		if restoreStatusFunc != nil {
+			restoreStatusFunc()
+		}
+	}
+
+	// enterFileBrowser lists every tracked file with the directories collapsed.
+	// With a target path, the directories leading to it are opened, it is
+	// selected, and its content is shown with the cursor on line (1-based).
+	enterFileBrowser := func(target string, line int) {
+		browserRoot = repoRoot
+		allFiles, err := git.GetAllTrackedFiles(repoRoot)
+		if err != nil {
+			updateGlobalStatus("Failed to get file list: "+err.Error(), "tomato")
+			return
+		}
+		if target != "" {
+			if _, err := os.Stat(filepath.Join(repoRoot, target)); err != nil {
+				updateGlobalStatus("Cannot open "+target+": the file does not exist", "tomato")
 				return
 			}
-			browserFiles = allFiles
-			isFileBrowserMode = true
-			currentSelection = 0
-			browserFilterQuery = ""
-			browserFilterMode = false
-			fileFilterQuery = ""
-			fileFilterMode = false
-			// The browser lists plain files, which no diff grep applies to.
-			diffGrepQuery = ""
-			diffGrepHits = nil
-			fileExcludeQuery = ""
-			searchQuery = ""
-			searchMatches = nil
-			searchMatchIndex = -1
-			// Collapse all directories by default
-			browserCollapseState = NewDirCollapseState()
-			// Build initial list to find directories
-			BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
-			for _, entry := range fileList {
-				if entry.IsDirectory {
-					browserCollapseState.SetCollapsed("browser", entry.Path, true)
+			// An untracked file is not in ls-files.
+			tracked := false
+			for _, f := range allFiles {
+				if f.Path == target {
+					tracked = true
+					break
 				}
 			}
-			fileListKeyContext.dirCollapseState = browserCollapseState
-			fileListKeyContext.filterQuery = &browserFilterQuery
-			fileListKeyContext.isFilterMode = &browserFilterMode
-			fileListView.SetTitle("File Browser (f: back to diff)")
-			// Switch diff view to file viewer updater
-			diffViewContext.viewUpdater = &FileViewUpdater{
-				diffView:    diffView,
-				filePath:    &currentFile,
-				searchQuery: &searchQuery,
+			if !tracked {
+				allFiles = append(allFiles, git.FileInfo{Path: target})
 			}
-			updateFileListView()
-			updateSelectedFileDiff()
-			if restoreStatusFunc != nil {
-				restoreStatusFunc()
+		}
+
+		selectionBeforeBrowser = FileEntry{}
+		if currentSelection >= 0 && currentSelection < len(fileList) {
+			selectionBeforeBrowser = fileList[currentSelection]
+		}
+		cursorBeforeBrowser = cursorY
+		// The file viewer draws in the unified pane.
+		splitBeforeBrowser = isSplitView
+		if isSplitView {
+			isSplitView = false
+			rebuildContentFlex()
+		}
+
+		browserFiles = allFiles
+		isFileBrowserMode = true
+		currentSelection = 0
+		browserFilterQuery = ""
+		browserFilterMode = false
+		fileFilterQuery = ""
+		fileFilterMode = false
+		// The browser lists plain files, which no diff grep applies to.
+		diffGrepQuery = ""
+		diffGrepHits = nil
+		fileExcludeQuery = ""
+		searchQuery = ""
+		searchMatches = nil
+		searchMatchIndex = -1
+		// Collapse all directories by default
+		browserCollapseState = NewDirCollapseState()
+		// Build initial list to find directories
+		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+		for _, entry := range fileList {
+			if entry.IsDirectory {
+				browserCollapseState.SetCollapsed("browser", entry.Path, true)
 			}
+		}
+		if target != "" {
+			for dir := filepath.Dir(target); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+				browserCollapseState.SetCollapsed("browser", filepath.ToSlash(dir), false)
+			}
+			BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+			for i, entry := range fileList {
+				if !entry.IsDirectory && entry.Path == target {
+					currentSelection = i
+					break
+				}
+			}
+		}
+		fileListKeyContext.dirCollapseState = browserCollapseState
+		fileListKeyContext.filterQuery = &browserFilterQuery
+		fileListKeyContext.isFilterMode = &browserFilterMode
+		fileListView.SetTitle("File Browser (f: back to diff)")
+		// Switch diff view to file viewer updater
+		diffViewContext.viewUpdater = &FileViewUpdater{
+			diffView:    diffView,
+			filePath:    &currentFile,
+			searchQuery: &searchQuery,
+		}
+		updateFileListView()
+		updateSelectedFileDiff()
+		if target != "" && !leftPaneFocused {
+			if lineCount := len(util.SplitLines(currentDiffText)); line > 0 && lineCount > 0 {
+				cursorY = min(line-1, lineCount-1)
+			}
+			diffViewContext.viewUpdater.UpdateWithCursor(currentDiffText, cursorY)
+			app.SetFocus(diffView)
+		}
+		if restoreStatusFunc != nil {
+			restoreStatusFunc()
+		}
+	}
+
+	// Set toggleFileBrowser after fileListKeyContext is created (needs reference)
+	fileListKeyContext.toggleFileBrowser = func() {
+		if isFileBrowserMode {
+			exitFileBrowser()
+		} else {
+			enterFileBrowser("", 0)
+		}
+	}
+
+	// 'f' in the diff pane shows the whole file under the cursor, and back.
+	diffViewContext.toggleFileView = func() {
+		if isFileBrowserMode {
+			exitFileBrowser()
+		} else if currentFile != "" {
+			enterFileBrowser(currentFile, getCursorFileLineNumber(diffViewContext))
 		}
 	}
 

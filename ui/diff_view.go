@@ -93,6 +93,7 @@ type DiffViewContext struct {
 	openPRDiff            func()          // if non-nil, opens the pull request diff ('pr')
 	pPressedAt            time.Time       // when 'p' was pressed, for the 'pr' sequence
 	reload                func()          // if non-nil, 'r' re-reads a read-only diff that can change
+	toggleFileView        func()          // if non-nil, 'f' switches between the diff and the whole file
 	restoreStatus         func()          // if non-nil, restores this view's status instead of the main view's
 	resizeFileList        func(delta int) // resize file list width
 }
@@ -820,6 +821,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					return nil
 				}
 				discardSelectedLines(ctx)
+				return nil
+			case 'f':
+				if ctx.toggleFileView != nil {
+					ctx.toggleFileView()
+				}
 				return nil
 			case 't':
 				// Open terminal command input
