@@ -101,7 +101,7 @@ $ giff -v         # show version
 | `Esc` | Back to file list |
 | `q` | Quit |
 
-The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, and opening the Git log or the PR diff.
+The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, and opening the Git log or the PR diff. In the PR diff, `r` reloads it after new commits.
 
 ## License
 

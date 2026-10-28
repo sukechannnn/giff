@@ -312,15 +312,17 @@ func (glv *GitLogView) showCommitDetails() {
 		args := append([]string{"show", "--format="}, opts...)
 		args = append(args, commitHash, "--")
 		return append(args, paths...)
-	}, glv.backToLog)
+	}, nil, glv.backToLog)
 	glv.showingCommit = true
 }
 
 // showReadOnlyDiff fills host with a file list and diff view for browsing
 // files without staging. diffArgs returns the git arguments that print the
 // diff of paths, or of every file when there are none, with opts such as "-w"
-// added as diff options. onEsc leaves the view.
-func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, onEsc func()) {
+// added as diff options. reload re-reads the file list of a diff that can
+// change, such as the pull request diff when commits land, and is called by
+// 'r'. It is nil for a fixed diff. onEsc leaves the view.
+func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
 	// Create UI components (same pattern as root_editor.go)
 	fileListView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -375,6 +377,9 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	statusView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	commitStatusMessage := "j/k:move  /:grep  !:exclude  e:fold  s:split  w:ws  V:select  c/v:editor  C-y:copy  t:terminal  Esc:back  q:quit"
+	if reload != nil {
+		commitStatusMessage = strings.Replace(commitStatusMessage, "  Esc:back", "  r:reload  Esc:back", 1)
+	}
 	statusView.SetText(commitStatusMessage)
 
 	contentFlex := tview.NewFlex()
@@ -890,6 +895,40 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 			}
 		}
 		return false
+	}
+
+	if reload != nil {
+		setupReadOnlyReload(readOnlyReloadState{
+			app:          app,
+			reload:       reload,
+			files:        &files,
+			fileList:     &fileList,
+			selection:    &currentSelection,
+			currentFile:  &currentFile,
+			diffText:     &currentDiffText,
+			cursorY:      &cursorY,
+			isSelecting:  &isSelecting,
+			selectStart:  &selectStart,
+			selectEnd:    &selectEnd,
+			leftFocused:  &leftPaneFocused,
+			fileListView: fileListView,
+			diffContext:  diffViewContext,
+			fetchDiff: func(filePath string) string {
+				var text string
+				updateDiffText(filePath, currentStatus, repoRoot, &text, ignoreWhitespace)
+				return text
+			},
+			regrep: func() {
+				if diffGrepQuery != "" && runDiffGrep(diffGrepQuery) != nil {
+					diffGrepHits = nil
+				}
+			},
+			updateFileListView:     updateFileListView,
+			updateSelectedFileDiff: updateSelectedFileDiff,
+			updateGlobalStatus:     updateGlobalStatus,
+			restoreStatus:          restoreStatus,
+			fileListContext:        fileListKeyContext,
+		})
 	}
 
 	// Switch display

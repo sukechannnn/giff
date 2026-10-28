@@ -724,6 +724,7 @@ type FileListKeyContext struct {
 	openTerminal           func()          // if non-nil, opens terminal command input
 	openPRDiff             func()          // if non-nil, opens the pull request diff ('pr')
 	pPressedAt             time.Time       // when 'p' was pressed, for the 'pr' sequence
+	reload                 func()          // if non-nil, 'r' re-reads a read-only diff that can change
 	restoreStatus          func()          // if non-nil, restores this view's status instead of the main view's
 	toggleFileBrowser      func()          // if non-nil, toggles file browser mode
 	isFileBrowserMode      *bool           // pointer to file browser mode flag
@@ -1264,10 +1265,12 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				ctx.pPressedAt = time.Now()
 				return nil
 			case 'r':
-				// pr -> pull request diff
+				// pr -> pull request diff; a lone r reloads the pull request diff
 				if ctx.openPRDiff != nil && time.Since(ctx.pPressedAt) < 500*time.Millisecond {
 					ctx.pPressedAt = time.Time{}
 					ctx.openPRDiff()
+				} else if ctx.reload != nil {
+					ctx.reload()
 				}
 				return nil
 			case 'g':
