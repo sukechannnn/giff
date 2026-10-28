@@ -1130,27 +1130,29 @@ func highlightSearchInTaggedText(tagged string, query string) string {
 				rest = rest[len(m):]
 				continue
 			}
-			// Escaped tag "[xyz[]" displays as "[xyz]". Keep it intact (tags
-			// inserted inside would break the escape sequence) and highlight
-			// the whole unit if any of its visible characters match.
+			// Escaped tag "[xyz[]" displays as "[xyz]". Tags inserted inside
+			// would break the escape sequence, so a unit that is only partly
+			// highlighted is split at the highlight's edges and each piece is
+			// escaped again on its own.
 			if m := util.MatchTviewEscapedTag(rest); m != "" {
-				visLen := utf8.RuneCountInString(m) - 1
-				shouldHL := false
-				for j := 0; j < visLen && visibleIdx+j < len(highlight); j++ {
-					if highlight[visibleIdx+j] {
-						shouldHL = true
-						break
+				visible := []rune(m[:len(m)-2] + "]")
+				pieceStart := 0
+				for j := range visible {
+					shouldHL := visibleIdx+j < len(highlight) && highlight[visibleIdx+j]
+					if shouldHL == inHL {
+						continue
 					}
+					result.WriteString(tview.Escape(string(visible[pieceStart:j])))
+					pieceStart = j
+					if shouldHL {
+						result.WriteString(hlStart)
+					} else {
+						result.WriteString(hlEnd)
+					}
+					inHL = shouldHL
 				}
-				if shouldHL && !inHL {
-					result.WriteString(hlStart)
-					inHL = true
-				} else if !shouldHL && inHL {
-					result.WriteString(hlEnd)
-					inHL = false
-				}
-				result.WriteString(m)
-				visibleIdx += visLen
+				result.WriteString(tview.Escape(string(visible[pieceStart:])))
+				visibleIdx += len(visible)
 				rest = rest[len(m):]
 				continue
 			}

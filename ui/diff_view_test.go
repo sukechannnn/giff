@@ -2,7 +2,12 @@ package ui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+	"github.com/sukechannnn/giff/util"
 )
 
 func TestExtractSplitCopyLines(t *testing.T) {
@@ -180,5 +185,67 @@ func TestHighlightSearchInTaggedTextPreservesLiteralBrackets(t *testing.T) {
 	got := highlightSearchInTaggedText(tagged, "AFFECTED")
 	if stripped := stripTviewTags(got); stripped != `+if [ -n "$AFFECTED" ]; then` {
 		t.Errorf("highlighted text lost literal brackets: %q (stripped %q)", got, stripped)
+	}
+}
+
+// drawTagged renders a tview-tagged line the way the diff view does and
+// returns its characters and which of them have the search highlight
+func drawTagged(t *testing.T, tagged string) (string, string) {
+	t.Helper()
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(80, 1)
+	view := tview.NewTextView().SetDynamicColors(true)
+	view.SetRect(0, 0, 80, 1)
+	view.SetText(tagged)
+	view.Draw(screen)
+
+	hlBg := tcell.GetColor(util.SearchHighlightBg)
+	var text, marks strings.Builder
+	for x := 0; x < 80; x++ {
+		r, _, style, _ := screen.GetContent(x, 0)
+		_, bg, _ := style.Decompose()
+		text.WriteRune(r)
+		if bg == hlBg {
+			marks.WriteByte('^')
+		} else {
+			marks.WriteByte(' ')
+		}
+	}
+	return strings.TrimRight(text.String(), " "), strings.TrimRight(marks.String(), " ")
+}
+
+// A word inside something tview would read as a tag, like Ruby's
+// %w[twin_pro best_win], is highlighted on its own, not with the whole
+// bracketed text.
+func TestHighlightSearchInTaggedTextInsideEscapedTag(t *testing.T) {
+	line := "  SECTIONS = %w[twin_pro best_win].freeze"
+	tagged := "[green]" + tview.Escape(line) + "[-]"
+	tests := []struct {
+		query string
+		marks string
+	}{
+		{"twin_pro", "                ^^^^^^^^"},
+		{"best_win", "                         ^^^^^^^^"},
+		{"[twin", "               ^^^^^"},
+		{"win]", "                              ^^^^"},
+		{"[twin_pro best_win]", "               ^^^^^^^^^^^^^^^^^^^"},
+	}
+	for _, tt := range tests {
+		highlighted := highlightSearchInTaggedText(tagged, tt.query)
+		// The cursor row gets its own background with the highlight kept
+		onCursor := util.ReplaceBackgroundPreserving(highlighted, string(util.CursorLineColor), []string{util.SearchHighlightBg})
+		for _, row := range []string{highlighted, onCursor} {
+			text, marks := drawTagged(t, row)
+			if text != line {
+				t.Errorf("%q: drawn %q, want %q", tt.query, text, line)
+			}
+			if marks != tt.marks {
+				t.Errorf("%q: highlight\n%s\n%s\nwant\n%s", tt.query, text, marks, tt.marks)
+			}
+		}
 	}
 }
