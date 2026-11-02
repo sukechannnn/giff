@@ -81,21 +81,22 @@ type DiffViewContext struct {
 	undoStack *UndoStack
 
 	// Callbacks
-	updateFileListView    func()
-	updateGlobalStatus    func(string, string)
-	setGlobalStatusText   func(string) // set status text directly (no timer)
-	refreshFileList       func()
-	onUpdate              func()
-	updateCurrentDiffText func(string, string, string, *string, bool)
-	updateStatusTitle     func()
-	onEsc                 func()          // if non-nil, call this instead of returning to left pane on Esc
-	openTerminal          func()          // if non-nil, opens terminal command input
-	openPRDiff            func()          // if non-nil, opens the pull request diff ('pr')
-	pPressedAt            time.Time       // when 'p' was pressed, for the 'pr' sequence
-	reload                func()          // if non-nil, 'r' re-reads a read-only diff that can change
-	toggleFileView        func()          // if non-nil, 'f' switches between the diff and the whole file
-	restoreStatus         func()          // if non-nil, restores this view's status instead of the main view's
-	resizeFileList        func(delta int) // resize file list width
+	updateFileListView     func()
+	updateSelectedFileDiff func() // shows the selected file again; in the file browser it re-reads the file
+	updateGlobalStatus     func(string, string)
+	setGlobalStatusText    func(string) // set status text directly (no timer)
+	refreshFileList        func()
+	onUpdate               func()
+	updateCurrentDiffText  func(string, string, string, *string, bool)
+	updateStatusTitle      func()
+	onEsc                  func()          // if non-nil, call this instead of returning to left pane on Esc
+	openTerminal           func()          // if non-nil, opens terminal command input
+	openPRDiff             func()          // if non-nil, opens the pull request diff ('pr')
+	pPressedAt             time.Time       // when 'p' was pressed, for the 'pr' sequence
+	reload                 func()          // if non-nil, 'r' re-reads a read-only diff that can change
+	toggleFileView         func()          // if non-nil, 'f' switches between the diff and the whole file
+	restoreStatus          func()          // if non-nil, restores this view's status instead of the main view's
+	resizeFileList         func(delta int) // resize file list width
 
 	// Word cursor: 'n' / 'N' step through the words of the cursor row while no
 	// search is active, searching for the word they land on, and Enter jumps
@@ -331,6 +332,13 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				*ctx.searchInput += string(event.Rune())
 				performSearch(ctx)
 			}
+			return nil
+		}
+
+		// The whole file has no diff to stage, discard, fold, split or re-read
+		// without whitespace, and those keys would put a diff in its place
+		if inFileView(ctx) && diffOnlyKey(event) {
+			ctx.updateGlobalStatus("Not available in the file view (f: back to diff)", "tomato")
 			return nil
 		}
 
@@ -816,7 +824,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					*ctx.selectEnd = -1
 					ctx.refreshFileList()
 					ctx.updateFileListView()
-					ctx.updateCurrentDiffText(*ctx.currentFile, *ctx.currentStatus, ctx.repoRoot, ctx.currentDiffText, *ctx.ignoreWhitespace)
+					if inFileView(ctx) {
+						// Read the edited file again, on the line the cursor was on
+						cursorY := *ctx.cursorY
+						ctx.updateSelectedFileDiff()
+						*ctx.cursorY = min(cursorY, max(len(fileViewLines(*ctx.currentDiffText))-1, 0))
+					} else {
+						ctx.updateCurrentDiffText(*ctx.currentFile, *ctx.currentStatus, ctx.repoRoot, ctx.currentDiffText, *ctx.ignoreWhitespace)
+					}
 					if ctx.viewUpdater != nil {
 						ctx.viewUpdater.UpdateWithCursor(*ctx.currentDiffText, *ctx.cursorY)
 					}
@@ -1324,6 +1339,21 @@ func nearestInMap(m map[int]int, idx int) (int, bool) {
 	return 0, false
 }
 
+// inFileView reports whether the pane shows a whole file instead of a diff
+func inFileView(ctx *DiffViewContext) bool {
+	_, ok := ctx.viewUpdater.(*FileViewUpdater)
+	return ok
+}
+
+// diffOnlyKey reports whether event is a key that works on a diff: staging,
+// discarding, undo / redo, folding, the split view and hiding whitespace
+func diffOnlyKey(event *tcell.EventKey) bool {
+	if event.Key() == tcell.KeyCtrlR {
+		return true
+	}
+	return event.Key() == tcell.KeyRune && strings.ContainsRune("aAduesw", event.Rune())
+}
+
 // getCursorFileLineNumber returns the line number of the current file that the
 // cursor sits on, for opening editors and copying path:line references. The
 // answer is always a line of the file as it is now: a '-' line has no place in
@@ -1335,7 +1365,7 @@ func getCursorFileLineNumber(ctx *DiffViewContext) int {
 	}
 
 	// File viewer mode: line number is simply cursorY + 1
-	if _, ok := ctx.viewUpdater.(*FileViewUpdater); ok {
+	if inFileView(ctx) {
 		return *ctx.cursorY + 1
 	}
 

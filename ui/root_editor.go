@@ -885,12 +885,13 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				globalStatusView.SetText(text)
 			}
 		},
-		refreshFileList:       refreshFileList,
-		onUpdate:              onUpdate,
-		updateCurrentDiffText: updateCurrentDiffText,
-		updateStatusTitle:     updateStatusTitle,
-		openTerminal:          openTerminalFunc,
-		openPRDiff:            openPRDiffFunc,
+		refreshFileList:        refreshFileList,
+		updateSelectedFileDiff: updateSelectedFileDiff,
+		onUpdate:               onUpdate,
+		updateCurrentDiffText:  updateCurrentDiffText,
+		updateStatusTitle:      updateStatusTitle,
+		openTerminal:           openTerminalFunc,
+		openPRDiff:             openPRDiffFunc,
 		resizeFileList: func(delta int) {
 			newFileRatio := fileListRatio + delta
 			newDiffRatio := diffViewRatio - delta
@@ -1293,6 +1294,11 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 					}
 
 					app.QueueUpdateDraw(func() {
+						// 'f' may have opened the file browser while the
+						// diff was read, and the diff would replace the file
+						if isFileBrowserMode {
+							return
+						}
 
 						// Save currently selected file and status
 						var currentlySelectedFile string
