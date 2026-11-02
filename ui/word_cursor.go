@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rivo/tview"
+	"github.com/sukechannnn/giff/ui/commands"
 )
 
 // The split view panes a word can sit in, in the order 'n' visits them
@@ -255,12 +256,27 @@ func clearWordCursor(ctx *DiffViewContext) {
 	restoreStatus(ctx.restoreStatus)
 }
 
+// yankWord copies the word cursor's word to the clipboard and turns the
+// word cursor off
+func yankWord(ctx *DiffViewContext) {
+	word := ctx.word.text
+	clearWordCursor(ctx)
+	if ctx.updateGlobalStatus == nil {
+		return
+	}
+	if err := commands.CopyToClipboard(word); err != nil {
+		ctx.updateGlobalStatus("Failed to copy word", "tomato")
+	} else {
+		ctx.updateGlobalStatus("Copied \""+tview.Escape(word)+"\" to clipboard", "forestgreen")
+	}
+}
+
 // showWordCursorStatus puts the word cursor's word and match position, and
 // the keys it takes, on the status bar
 func showWordCursorStatus(ctx *DiffViewContext) {
 	if ctx.setGlobalStatusText == nil {
 		return
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  Esc:cancel",
+	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  y:yank  Esc:cancel",
 		tview.Escape(ctx.word.text), *ctx.searchMatchIndex+1, len(*ctx.searchMatches)))
 }

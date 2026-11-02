@@ -344,6 +344,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 		// Any key other than the word cursor's own turns it off
 		if wordCursorActive(ctx) {
+			// 'y' yanks the word, like a visual selection
+			if event.Key() == tcell.KeyRune && event.Rune() == 'y' {
+				yankWord(ctx)
+				return nil
+			}
 			// Scrolling keeps it too, so the search can be looked over
 			wordKey := event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyEsc ||
 				event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyCtrlY ||

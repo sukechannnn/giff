@@ -94,7 +94,7 @@ $ giff -v         # show version
 | `e` | Toggle fold |
 | `s` | Split view |
 | `w` | Hide whitespace |
-| `y` | Yank lines |
+| `y` | Yank lines (the word while `n` / `N` is on one) |
 | `Y` | Copy file path |
 | `f` | Show the whole file at the cursor (`f` again returns to the diff) |
 | `Ctrl+L` | Copy `path:line` |
