@@ -10,29 +10,59 @@ import (
 
 func TestDefinitionRegexp(t *testing.T) {
 	tests := []struct {
+		lang string
 		line string
 		want bool
 	}{
-		{"func Foo() {", true},
-		{"func (r *Repo) Foo(x int) error {", true},
-		{"type Foo struct {", true},
-		{"const Foo = 1", true},
-		{"def Foo(self):", true},
-		{"  def self.Foo", true},
-		{"class Foo < Base", true},
-		{"export default async function Foo() {", true},
-		{"export const Foo = () => {}", true},
-		{"export interface Foo {", true},
-		{"pub(crate) fn Foo() {", true},
-		{"	return Foo()", false},
-		{"// Foo does things", false},
-		{"func FooBar() {", false},
-		{"x := Foo", false},
+		{"go", "func Foo() {", true},
+		{"go", "func (r *Repo) Foo(x int) error {", true},
+		{"go", "type Foo struct {", true},
+		{"go", "const Foo = 1", true},
+		{"python", "def Foo(self):", true},
+		{"ruby", "  def self.Foo", true},
+		{"ruby", "class Foo < Base", true},
+		{"js", "export default async function Foo() {", true},
+		{"js", "export const Foo = () => {}", true},
+		{"js", "export interface Foo {", true},
+		{"rust", "pub(crate) fn Foo() {", true},
+		{"go", "	return Foo()", false},
+		{"go", "// Foo does things", false},
+		{"go", "func FooBar() {", false},
+		{"go", "x := Foo", false},
+		// The patterns of one language never count in another
+		{"ruby", "function Foo() {", false},
+		{"go", "def Foo", false},
+		{"python", "  def self.Foo", false},
 	}
-	def := definitionRegexp("Foo")
 	for _, tt := range tests {
-		if got := def.MatchString(tt.line); got != tt.want {
-			t.Errorf("%q: match = %v, want %v", tt.line, got, tt.want)
+		if got := definitionRegexp(tt.lang, "Foo").MatchString(tt.line); got != tt.want {
+			t.Errorf("%s %q: match = %v, want %v", tt.lang, tt.line, got, tt.want)
+		}
+	}
+}
+
+// The lines of a language not known never count
+func TestDefinitionRegexpUnknownLanguage(t *testing.T) {
+	for _, lang := range []string{".java", ""} {
+		if def := definitionRegexp(lang, "Foo"); def != nil {
+			t.Errorf("%q: regexp = %v, want none", lang, def)
+		}
+	}
+}
+
+func TestLanguageOf(t *testing.T) {
+	tests := map[string]string{
+		"app/a.rb":     "ruby",
+		"lib/Rakefile": "ruby",
+		"web/c.TSX":    "js",
+		"x.mjs":        "js",
+		"main.go":      "go",
+		"Foo.java":     ".java",
+		"Makefile":     "",
+	}
+	for path, want := range tests {
+		if got := LanguageOf(path); got != want {
+			t.Errorf("LanguageOf(%q) = %q, want %q", path, got, want)
 		}
 	}
 }
@@ -58,6 +88,9 @@ func TestFindDefinitions(t *testing.T) {
 	run("init", "-q")
 	write("a.go", "package a\n\nfunc Foo() {}\n\nfunc bar() { Foo() }\n")
 	write("sub/b.go", "package sub\n\n// Foo is not here\ntype Foo int\n")
+	write("sub/c.go", "package sub\n\nvar s = `\ndef Foo\n`\n")
+	// No language giff knows of
+	write("d.java", "class Foo {}\n")
 	run("add", "a.go")
 	// sub/b.go stays untracked
 

@@ -25,8 +25,7 @@ func TestSortDefinitions(t *testing.T) {
 	}
 }
 
-// Only the definitions in the language of the file being read are offered,
-// unless there are none in it
+// Only the definitions in the language of the file being read are offered
 func TestSameLanguageDefinitions(t *testing.T) {
 	defs := []git.Location{
 		{Path: "app/a.rb", Line: 1},
@@ -47,8 +46,8 @@ func TestSameLanguageDefinitions(t *testing.T) {
 	}{
 		{"app/x.rb", []int{1, 3}},
 		{"web/x.js", []int{4}},
-		{"x.go", []int{1, 2, 3, 4}},
-		{"Makefile", []int{1, 2, 3, 4}},
+		{"app/views/x.html.erb", []int{1, 3}},
+		{"x.go", nil},
 	}
 	for _, tt := range tests {
 		if got := lines(sameLanguageDefinitions(defs, tt.currentFile)); !reflect.DeepEqual(got, tt.want) {

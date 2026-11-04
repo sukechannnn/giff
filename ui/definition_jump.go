@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -30,17 +29,21 @@ func jumpToDefinition(ctx *DiffViewContext) {
 		ctx.updateGlobalStatus("Put the cursor on a word with n first, then go", "tomato")
 		return
 	}
+	if !git.SupportsDefinitions(*ctx.currentFile) {
+		ctx.updateGlobalStatus("Jump to definition does not support "+tview.Escape(filepath.Base(*ctx.currentFile))+" yet", "tomato")
+		return
+	}
 	word := ctx.word.text
 	defs, err := git.FindDefinitions(ctx.repoRoot, word)
 	if err != nil {
 		ctx.updateGlobalStatus("Failed to search for the definition: "+err.Error(), "tomato")
 		return
 	}
+	defs = sameLanguageDefinitions(defs, *ctx.currentFile)
 	if len(defs) == 0 {
 		ctx.updateGlobalStatus("No definition of "+tview.Escape(word)+" found", "tomato")
 		return
 	}
-	defs = sameLanguageDefinitions(defs, *ctx.currentFile)
 	sortDefinitions(defs, *ctx.currentFile)
 
 	// On a definition already, the others are what is wanted
@@ -63,50 +66,15 @@ func jumpToDefinition(ctx *DiffViewContext) {
 	}
 }
 
-// languageFamilies maps the extensions of the languages whose files share
-// names to one key. Any other extension is a language of its own.
-var languageFamilies = map[string]string{
-	".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
-	".ts": "js", ".tsx": "js", ".mts": "js", ".cts": "js",
-	".rb": "ruby", ".rake": "ruby", ".ru": "ruby", ".gemspec": "ruby",
-	".py": "python", ".pyi": "python",
-	".h": "c", ".c": "c",
-}
-
-// languageFileNames are the files without an extension a language is known by
-var languageFileNames = map[string]string{
-	"Rakefile": "ruby", "Gemfile": "ruby",
-}
-
-// languageOf returns the key of the language path is written in, or "" when
-// it cannot tell
-func languageOf(path string) string {
-	if lang, ok := languageFileNames[filepath.Base(path)]; ok {
-		return lang
-	}
-	ext := strings.ToLower(filepath.Ext(path))
-	if lang, ok := languageFamilies[ext]; ok {
-		return lang
-	}
-	return ext
-}
-
 // sameLanguageDefinitions keeps the definitions written in the language of
-// currentFile. All of them are kept when its language is unknown or none is
-// written in it, as a definition elsewhere beats finding nothing.
+// currentFile
 func sameLanguageDefinitions(defs []git.Location, currentFile string) []git.Location {
-	lang := languageOf(currentFile)
-	if lang == "" {
-		return defs
-	}
+	lang := git.LanguageOf(currentFile)
 	var same []git.Location
 	for _, d := range defs {
-		if languageOf(d.Path) == lang {
+		if git.LanguageOf(d.Path) == lang {
 			same = append(same, d)
 		}
-	}
-	if len(same) == 0 {
-		return defs
 	}
 	return same
 }
