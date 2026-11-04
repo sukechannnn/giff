@@ -163,13 +163,13 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	updateStatusTitle := func() {
 		var titleParts []string
 		if enableAutoRefresh {
-			titleParts = append(titleParts, "Watch: on")
+			titleParts = append(titleParts, util.ColoredTitle(util.WatchTitleColor, "Watch: on"))
 		}
 		if ignoreWhitespace {
-			titleParts = append(titleParts, "Hide whitespace: on")
+			titleParts = append(titleParts, util.ColoredTitle(util.WhitespaceTitleColor, "Hide whitespace: on"))
 		}
 		if len(titleParts) > 0 {
-			globalStatusView.SetTitle(" " + strings.Join(titleParts, " | ") + " ")
+			globalStatusView.SetTitle(" " + strings.Join(titleParts, util.TitleSeparator) + " ")
 			globalStatusView.SetTitleAlign(tview.AlignLeft)
 		} else {
 			globalStatusView.SetTitle("")
@@ -210,7 +210,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	fileListView.SetBorder(true).SetTitle("j/k: navigate, Enter: switch to diff")
+	fileListView.SetBorder(true).SetTitle(util.ColoredTitle(util.FileListTitleColor, "j/k: navigate, Enter: switch to diff"))
 	fileListView.SetBorderColor(borderColor)
 	fileListView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -219,7 +219,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	diffView.SetBorder(true).SetTitle("Enter: back to list")
+	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Enter: back to list"))
 	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -233,7 +233,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	beforeView.SetBorder(true).SetTitle("Before")
+	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Before"))
 	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -241,7 +241,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	afterView.SetBorder(true).SetTitle("After")
+	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "After"))
 	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -1048,7 +1048,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.dirCollapseState = dirCollapseState
 		fileListKeyContext.filterQuery = &fileFilterQuery
 		fileListKeyContext.isFilterMode = &fileFilterMode
-		fileListView.SetTitle("j/k: navigate, Enter: switch to diff")
+		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "j/k: navigate, Enter: switch to diff"))
 		// Restore diff view updater
 		if splitBeforeBrowser {
 			isSplitView = true
@@ -1173,7 +1173,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.dirCollapseState = browserCollapseState
 		fileListKeyContext.filterQuery = &browserFilterQuery
 		fileListKeyContext.isFilterMode = &browserFilterMode
-		fileListView.SetTitle("File Browser (f: back to diff)")
+		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "File Browser (f: back to diff)"))
 		// Switch diff view to file viewer updater
 		diffViewContext.viewUpdater = &FileViewUpdater{
 			diffView:    diffView,
@@ -1281,7 +1281,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.dirCollapseState = browserCollapseState
 		fileListKeyContext.filterQuery = &browserFilterQuery
 		fileListKeyContext.isFilterMode = &browserFilterMode
-		fileListView.SetTitle("File Browser (f: back to diff)")
+		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "File Browser (f: back to diff)"))
 		diffViewContext.viewUpdater = &FileViewUpdater{
 			diffView:    diffView,
 			filePath:    &currentFile,

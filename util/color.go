@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 type ColorColde string
@@ -17,6 +18,24 @@ const (
 	PlaceholderColor         = ColorColde("#808080")
 	CursorLineColor          = ColorColde("#6A71F7") // RGB, so the cursor looks the same in every terminal palette
 )
+
+// The colors of the pane and status bar titles, one for each kind, so each
+// stands out from the others at a glance
+const (
+	ModeTitleColor       = ColorColde("#FF79C6") // Mode: PR
+	WatchTitleColor      = ColorColde("#50FA7B") // Watch: on
+	WhitespaceTitleColor = ColorColde("#F1FA8C") // Hide whitespace: on
+	FileListTitleColor   = ColorColde("#8BE9FD") // the file list
+	DiffTitleColor       = ColorColde("#BD93F9") // the diff panes
+)
+
+// TitleSeparator goes between the titles shown together on a border
+var TitleSeparator = ColoredTitle(PlaceholderColor, " | ")
+
+// ColoredTitle returns text as a title drawn in c
+func ColoredTitle(c ColorColde, text string) string {
+	return "[" + string(c) + "]" + tview.Escape(text) + "[-]"
+}
 
 func (c ColorColde) hex() string {
 	return string(c)[1:]

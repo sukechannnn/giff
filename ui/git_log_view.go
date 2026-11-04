@@ -332,7 +332,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetWrap(false)
 	borderColor := util.CommitAreaBorderColor.ToTcellColor()
 
-	fileListView.SetBorder(true).SetTitle(title)
+	fileListView.SetBorder(true).SetTitle(util.ColoredTitle(util.FileListTitleColor, title))
 	fileListView.SetBorderColor(borderColor)
 	fileListView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -340,7 +340,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	diffView.SetBorder(true).SetTitle("File Diff")
+	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "File Diff"))
 	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -352,7 +352,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	beforeView.SetBorder(true).SetTitle("Before")
+	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Before"))
 	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -360,7 +360,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	afterView.SetBorder(true).SetTitle("After")
+	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "After"))
 	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -525,13 +525,13 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	updateStatusTitle := func() {
 		var titleParts []string
 		if mode != "" {
-			titleParts = append(titleParts, "Mode: "+mode)
+			titleParts = append(titleParts, util.ColoredTitle(util.ModeTitleColor, "Mode: "+mode))
 		}
 		if ignoreWhitespace {
-			titleParts = append(titleParts, "Hide whitespace: on")
+			titleParts = append(titleParts, util.ColoredTitle(util.WhitespaceTitleColor, "Hide whitespace: on"))
 		}
 		if len(titleParts) > 0 {
-			statusView.SetTitle(" " + strings.Join(titleParts, " | ") + " ")
+			statusView.SetTitle(" " + strings.Join(titleParts, util.TitleSeparator) + " ")
 			statusView.SetTitleAlign(tview.AlignLeft)
 		} else {
 			statusView.SetTitle("")
