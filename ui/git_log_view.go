@@ -308,7 +308,7 @@ func (glv *GitLogView) showCommitDetails() {
 
 	commitHash := entry.Hash
 	glv.loadCommitFiles(commitHash)
-	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", glv.commitFiles, func(opts []string, paths ...string) []string {
+	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", "", glv.commitFiles, func(opts []string, paths ...string) []string {
 		args := append([]string{"show", "--format="}, opts...)
 		args = append(args, commitHash, "--")
 		return append(args, paths...)
@@ -322,7 +322,9 @@ func (glv *GitLogView) showCommitDetails() {
 // added as diff options. reload re-reads the file list of a diff that can
 // change, such as the pull request diff when commits land, and is called by
 // 'r'. It is nil for a fixed diff. onEsc leaves the view.
-func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
+//
+// A non-empty mode, such as "PR", is shown on top of the status bar.
+func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
 	// Create UI components (same pattern as root_editor.go)
 	fileListView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -521,13 +523,21 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	}
 
 	updateStatusTitle := func() {
+		var titleParts []string
+		if mode != "" {
+			titleParts = append(titleParts, "Mode: "+mode)
+		}
 		if ignoreWhitespace {
-			statusView.SetTitle(" Hide whitespace: on ")
+			titleParts = append(titleParts, "Hide whitespace: on")
+		}
+		if len(titleParts) > 0 {
+			statusView.SetTitle(" " + strings.Join(titleParts, " | ") + " ")
 			statusView.SetTitleAlign(tview.AlignLeft)
 		} else {
 			statusView.SetTitle("")
 		}
 	}
+	updateStatusTitle()
 
 	// runDiffGrep greps the changed lines of every file at once and remembers
 	// the hits, so the file list can be narrowed to the matching files.

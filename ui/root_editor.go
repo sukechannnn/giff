@@ -792,7 +792,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 				focusBefore := app.GetFocus()
 				prView := tview.NewFlex()
-				showReadOnlyDiff(app, prView, repoRoot, "PR: "+base+"...HEAD", files, func(opts []string, paths ...string) []string {
+				showReadOnlyDiff(app, prView, repoRoot, "PR: "+base+"...HEAD", "PR", files, func(opts []string, paths ...string) []string {
 					extra := append(append([]string{}, opts...), "--")
 					return git.PRDiffArgs(base, append(extra, paths...)...)
 				}, func() ([]FileEntry, error) {
