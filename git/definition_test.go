@@ -29,15 +29,47 @@ func TestDefinitionRegexp(t *testing.T) {
 		{"go", "// Foo does things", false},
 		{"go", "func FooBar() {", false},
 		{"go", "x := Foo", false},
+		{"ruby", "  FOO_BAR = 1", false},
+		{"ruby", "  attr_reader :foo, :Foo", true},
+		{"ruby", "  attr_accessor(:Foo)", true},
+		{"ruby", "  delegate :bar, to: :Foo", false},
+		{"ruby", "  let!(:Foo) { create(:user) }", true},
+		{"ruby", "  subject(:Foo) { described_class.new }", true},
+		{"ruby", "  alias_method :Foo, :bar", true},
+		{"ruby", "  alias_method :bar, :Foo", false},
+		{"ruby", "  alias Foo bar", true},
+		{"ruby", "  define_method(:Foo) do", true},
+		{"ruby", "  scope :Foo, -> { where(x: 1) }", true},
+		{"ruby", "  has_many :Foo, dependent: :destroy", true},
+		{"ruby", "  belongs_to :Foo", true},
+		{"ruby", "  create(:Foo)", false},
+		// A constant, and nothing that only reads or compares it
+		{"ruby", "  Foo = Struct.new(:a)", true},
+		{"ruby", "Admin::Foo ||= 1", true},
+		{"ruby", "  Foo == 1", false},
+		{"ruby", "  Foo =~ /x/", false},
+		{"ruby", "  { Foo => 1 }", false},
 		// The patterns of one language never count in another
 		{"ruby", "function Foo() {", false},
 		{"go", "def Foo", false},
 		{"python", "  def self.Foo", false},
+		{"python", "  scope :Foo", false},
+		{"js", "  attr_reader :Foo", false},
 	}
 	for _, tt := range tests {
 		if got := definitionRegexp(tt.lang, "Foo").MatchString(tt.line); got != tt.want {
 			t.Errorf("%s %q: match = %v, want %v", tt.lang, tt.line, got, tt.want)
 		}
+	}
+}
+
+// A lowercase name is never a constant, so assigning to it does not count
+func TestDefinitionRegexpLocalVariable(t *testing.T) {
+	if definitionRegexp("ruby", "foo").MatchString("  foo = 1") {
+		t.Error("an assignment to a local variable counts as its definition")
+	}
+	if !definitionRegexp("ruby", "foo").MatchString("  attr_reader :foo") {
+		t.Error("attr_reader of a lowercase name does not count")
 	}
 }
 
