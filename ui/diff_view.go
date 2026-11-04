@@ -104,6 +104,12 @@ type DiffViewContext struct {
 	word     wordSpan
 	wordRow  int    // the row the word is on
 	wordFile string // the file the word is in
+
+	// Jump to definition: 'go' shows a definition of the word cursor's word
+	// in the file view through jumpTo, and Ctrl+O goes back through jumpBack.
+	// Both are nil where there is no file view.
+	jumpTo   func(loc git.Location)
+	jumpBack func() bool // false when there is nowhere to go back to
 }
 
 // applyUndoRedoInDiffView runs the given undo/redo action and refreshes both
@@ -335,6 +341,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			return nil
 		}
 
+		// go jumps to the definition of the word cursor's word
+		gPending := *ctx.gPressed && time.Since(*ctx.lastGTime) < 500*time.Millisecond
+		if gPending && event.Key() == tcell.KeyRune && event.Rune() == 'o' {
+			*ctx.gPressed = false
+			jumpToDefinition(ctx)
+			return nil
+		}
+
 		// The whole file has no diff to stage, discard, fold, split or re-read
 		// without whitespace, and those keys would put a diff in its place
 		if inFileView(ctx) && diffOnlyKey(event) {
@@ -349,10 +363,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				yankWord(ctx)
 				return nil
 			}
-			// Scrolling keeps it too, so the search can be looked over
+			// Scrolling keeps it too, so the search can be looked over, and so
+			// does the g of go
 			wordKey := event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyEsc ||
 				event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyCtrlY ||
-				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N'))
+				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N' || (event.Rune() == 'g' && !gPending)))
 			if !wordKey {
 				clearWordCursor(ctx)
 			}
@@ -414,6 +429,12 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			}
 			ctx.updateFileListView()
 			ctx.app.SetFocus(ctx.fileListView)
+			return nil
+		case tcell.KeyCtrlO:
+			// Ctrl+O: back to where go was pressed
+			if ctx.jumpBack == nil || !ctx.jumpBack() {
+				ctx.updateGlobalStatus("No jump to go back from", "tomato")
+			}
 			return nil
 		case tcell.KeyCtrlE:
 			// Ctrl+E: scroll down one line (cursor follows when at top)

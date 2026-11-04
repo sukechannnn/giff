@@ -21,7 +21,7 @@ var preferUnstagedSection bool = false
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
 var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
-var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  C-e/C-y:scroll  Esc:back  q:quit"
+var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
 var restoreStatusFunc func()
@@ -1032,7 +1032,17 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	var cursorBeforeBrowser int
 	var splitBeforeBrowser bool
 
+	// Where 'go' jumped from, for Ctrl+O to go back to: a file and row of the
+	// file view, or the diff the file view was opened from
+	type jumpPoint struct {
+		path     string
+		row      int
+		fileView bool
+	}
+	var jumpHistory []jumpPoint
+
 	exitFileBrowser := func() {
+		jumpHistory = nil
 		isFileBrowserMode = false
 		browserRoot = repoRoot
 		fileListKeyContext.dirCollapseState = dirCollapseState
@@ -1078,10 +1088,26 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
+	// selectInBrowser opens the directories leading to target in the file
+	// browser and selects it
+	selectInBrowser := func(target string) {
+		for dir := filepath.Dir(target); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+			browserCollapseState.SetCollapsed("browser", filepath.ToSlash(dir), false)
+		}
+		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+		for i, entry := range fileList {
+			if !entry.IsDirectory && entry.Path == target {
+				currentSelection = i
+				break
+			}
+		}
+	}
+
 	// enterFileBrowser lists every tracked file with the directories collapsed.
 	// With a target path, the directories leading to it are opened, it is
 	// selected, and its content is shown with the cursor on line (1-based).
 	enterFileBrowser := func(target string, line int) {
+		jumpHistory = nil
 		browserRoot = repoRoot
 		allFiles, err := git.GetAllTrackedFiles(repoRoot)
 		if err != nil {
@@ -1142,16 +1168,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			}
 		}
 		if target != "" {
-			for dir := filepath.Dir(target); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
-				browserCollapseState.SetCollapsed("browser", filepath.ToSlash(dir), false)
-			}
-			BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
-			for i, entry := range fileList {
-				if !entry.IsDirectory && entry.Path == target {
-					currentSelection = i
-					break
-				}
-			}
+			selectInBrowser(target)
 		}
 		fileListKeyContext.dirCollapseState = browserCollapseState
 		fileListKeyContext.filterQuery = &browserFilterQuery
@@ -1193,6 +1210,62 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		} else if currentFile != "" {
 			enterFileBrowser(currentFile, getCursorFileLineNumber(diffViewContext))
 		}
+	}
+
+	// showInFileView shows line (1-based) of path in the file view, opening the
+	// file browser when the diff is shown
+	showInFileView := func(path string, line int) {
+		if !isFileBrowserMode {
+			enterFileBrowser(path, line)
+			return
+		}
+		listed := false
+		for _, f := range browserFiles {
+			if f.Path == path {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			browserFiles = append(browserFiles, git.FileInfo{Path: path})
+		}
+		// The filter could hide the file
+		browserFilterQuery = ""
+		browserFilterMode = false
+		selectInBrowser(path)
+		updateFileListView()
+		updateSelectedFileDiff()
+		if lineCount := len(util.SplitLines(currentDiffText)); line > 0 && lineCount > 0 {
+			cursorY = min(line-1, lineCount-1)
+		}
+		diffViewContext.viewUpdater.UpdateWithCursor(currentDiffText, cursorY)
+	}
+
+	// 'go' shows a definition, remembering where it was pressed
+	diffViewContext.jumpTo = func(loc git.Location) {
+		var from jumpPoint
+		if isFileBrowserMode {
+			from = jumpPoint{path: currentFile, row: cursorY, fileView: true}
+		}
+		showInFileView(loc.Path, loc.Line)
+		if isFileBrowserMode && currentFile == loc.Path {
+			jumpHistory = append(jumpHistory, from)
+		}
+	}
+
+	// Ctrl+O goes back to where the last 'go' was pressed
+	diffViewContext.jumpBack = func() bool {
+		if len(jumpHistory) == 0 {
+			return false
+		}
+		back := jumpHistory[len(jumpHistory)-1]
+		jumpHistory = jumpHistory[:len(jumpHistory)-1]
+		if !back.fileView {
+			exitFileBrowser()
+			return true
+		}
+		showInFileView(back.path, back.row+1)
+		return true
 	}
 
 	// If an external file path was supplied (outside the repo), bootstrap the

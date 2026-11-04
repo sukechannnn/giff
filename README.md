@@ -91,6 +91,8 @@ $ giff -v         # show version
 | `/` | Search |
 | `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
 | `n` / `N` (no search) | Move a cursor word by word, on to the next / prev line at the end, highlighting every occurrence of the word; `Enter` jumps to the next one, `Esc` drops it |
+| `go` | Jump to the definition of the word under the `n` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from) |
+| `Ctrl+O` | Back to where `go` was pressed |
 | `e` | Toggle fold |
 | `s` | Split view |
 | `w` | Hide whitespace |
@@ -103,7 +105,7 @@ $ giff -v         # show version
 | `Esc` | Back to file list |
 | `q` | Quit |
 
-The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, showing the whole file (`f`), and opening the Git log or the PR diff. In the PR diff, `r` reloads it after new commits.
+The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, showing the whole file (`f`), jumping to a definition (`go`), and opening the Git log or the PR diff. In the PR diff, `r` reloads it after new commits.
 
 ## License
 

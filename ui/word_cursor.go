@@ -172,12 +172,17 @@ func moveWordCursor(ctx *DiffViewContext, direction int) {
 		}
 	}
 
+	selectWord(ctx, row, words[next])
+}
+
+// selectWord puts the word cursor on word of row and searches for it right
+// away, so every occurrence lights up
+func selectWord(ctx *DiffViewContext, row int, word wordSpan) {
 	*ctx.cursorY = row
-	ctx.word = words[next]
+	ctx.word = word
 	ctx.wordRow = row
 	ctx.wordFile = *ctx.currentFile
 
-	// Search for the word right away, so every occurrence lights up
 	*ctx.searchQuery = ctx.word.text
 	*ctx.searchMatches = findSearchMatches(*ctx.currentDiffText, *ctx.isSplitView, ctx.foldState, *ctx.currentFile, ctx.repoRoot, ctx.word.text)
 	*ctx.searchMatchIndex = -1
@@ -277,6 +282,6 @@ func showWordCursorStatus(ctx *DiffViewContext) {
 	if ctx.setGlobalStatusText == nil {
 		return
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  y:yank  Esc:cancel",
+	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  go:definition  y:yank  Esc:cancel",
 		tview.Escape(ctx.word.text), *ctx.searchMatchIndex+1, len(*ctx.searchMatches)))
 }

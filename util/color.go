@@ -10,6 +10,7 @@ type ColorColde string
 
 const (
 	BackgroundColor          = ColorColde("#34373E") // ("#272A32")
+	ModalBackgroundColor     = ColorColde("#22242A") // darker than BackgroundColor, so a modal stands out over it
 	NotSelectedFileLineColor = ColorColde("#383E50")
 	MainTextColor            = ColorColde("#FFFFFF")
 	CommitAreaBorderColor    = ColorColde("#4A5568")
