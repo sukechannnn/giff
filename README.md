@@ -91,7 +91,7 @@ $ giff -v         # show version
 | `/` | Search |
 | `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
 | `n` / `N` (no search) | Move a cursor word by word, on to the next / prev line at the end, highlighting every occurrence of the word; `Enter` jumps to the next one, `Esc` drops it |
-| `go` | Jump to the definition of the word under the `n` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from) |
+| `go` | Jump to the definition of the word under the `n` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; see [the details](./docs/definition-jump.md)) |
 | `Ctrl+O` | Back to where `go` was pressed |
 | `e` | Toggle fold |
 | `s` | Split view |
