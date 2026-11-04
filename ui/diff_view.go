@@ -616,7 +616,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 				// Get content directly from unified view (includes fold expanded lines)
 				var sanitized []string
-				if !*ctx.isSplitView {
+				if inFileView(ctx) {
+					// The file's own lines: a leading '+' or '-' is part of them
+					lines := fileViewLines(*ctx.currentDiffText)
+					start, end = max(start, 0), min(end, len(lines)-1)
+					if start <= end {
+						sanitized = util.Dedent(lines[start : end+1])
+					}
+				} else if !*ctx.isSplitView {
 					content := getCachedUnifiedContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
 					if content != nil && len(content.Lines) > 0 {
 						if start < 0 {
@@ -631,6 +638,8 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 							plain := stripTviewTags(line.Content)
 							sanitized = append(sanitized, stripDiffPrefix(plain))
 						}
+						// Copied code starts at column zero, however deep it sits
+						sanitized = util.Dedent(sanitized)
 					}
 				} else {
 					content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
@@ -642,6 +651,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 							end = len(content.BeforeLines) - 1
 						}
 						beforeLines, afterLines := extractSplitCopyLines(content, start, end)
+						beforeLines, afterLines = util.Dedent(beforeLines), util.Dedent(afterLines)
 						sanitized = append(sanitized, beforeLines...)
 						if len(beforeLines) > 0 && len(afterLines) > 0 {
 							sanitized = append(sanitized, "")
