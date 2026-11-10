@@ -52,18 +52,25 @@ func LanguageOf(path string) string {
 //
 //  1. a declaration led by a keyword, such as def foo or func Foo
 //  2. a constant, an assignment whose name says it is one, such as FOO = 1
-//  3. a member made by a call of the language itself, such as attr_reader :foo
-//  4. one made by a call of a framework, such as scope :foo in Rails
+//  3. a member of a class, declared without a keyword of its own, such as a
+//     method foo() { in JavaScript, or made by a call of the language, such
+//     as attr_reader :foo in Ruby
+//  4. one made by a framework, such as scope :foo in Rails
 //
-// The patterns of the first two have NAME where the name goes. They only look
-// at the start of the line, so a call or a mention of the name never counts.
+// The patterns have NAME where the name goes. They only look at the start of
+// the line, so a call or a mention of the name never counts.
 
 // language is how the definitions of one language read
 type language struct {
 	declarations []string // 1
 	constants    []string // 2, used when isConstant says the name is one
 	isConstant   func(string) bool
-	definers     []definer // 3
+	members      []string  // 3, declared without a keyword
+	definers     []definer // 3, made by a call
+
+	// notDefinitions match the lines that never define anything, such as an
+	// if statement, which a pattern of a member could take for one
+	notDefinitions []string
 
 	// firstArgCall and everyArgCall are how a call naming what it defines by
 	// its first argument, or by each of its leading ones, reads. CALL is where
@@ -79,12 +86,17 @@ type definer struct {
 	everyArg bool // attr_reader :a, :b defines both, alias_method :a, :b only a
 }
 
-// framework is the calls of a framework that define things, which count in
-// the files of its language
+// framework is what defines things in a framework, which counts in the files
+// of its language
 type framework struct {
 	language string
-	definers []definer
+	patterns []string  // lines defining NAME, such as foo = models.CharField()
+	definers []definer // calls defining what their arguments name
 }
+
+// jsModifiers are the words that can come before a class member in
+// JavaScript and TypeScript
+const jsModifiers = `(static|async|get|set|public|private|protected|readonly|override|abstract|declare|accessor)`
 
 // languages are the languages known by their LanguageOf key
 var languages = map[string]language{
@@ -98,6 +110,16 @@ var languages = map[string]language{
 		declarations: []string{
 			`^\s*(async\s+)?def\s+NAME\b`,
 			`^\s*class\s+NAME\b`,
+		},
+		// An assignment at the top of a module, which makes a global of it
+		constants: []string{`^NAME\s*(:[^=]+)?=([^=]|$)`},
+		members: []string{
+			// An annotated field of a class, such as a dataclass. A parameter
+			// of a function split over lines ends with a comma.
+			`^\s+NAME\s*:\s*[A-Za-z_'"](.*[^,\s])?\s*$`,
+		},
+		notDefinitions: []string{
+			`^\s*(if|elif|else|for|while|try|except|finally|with|lambda|return|match|case)\b`,
 		},
 	},
 	"ruby": {
@@ -121,6 +143,24 @@ var languages = map[string]language{
 			`^\s*(export\s+)?(default\s+)?(abstract\s+)?(class|interface|type|enum)\s+NAME\b`,
 			`^\s*(export\s+)?(const|let|var)\s+NAME\b`,
 		},
+		members: []string{
+			// A method of a class or an object: foo(a, b) {, or foo( with the
+			// parameters on the lines below after a modifier, as a call can
+			// spill over lines too. A $ in the parameters is a GraphQL query
+			// in a string, such as getJob(id: $id) {.
+			`^\s*(` + jsModifiers + `\s+)*\*?\s*#?NAME\s*[?!]?\s*(<[^>]*>)?\s*\([^()$]*\)\s*(:\s*[^={;]+)?\s*\{\s*$`,
+			`^\s*(` + jsModifiers + `\s+)+\*?\s*#?NAME\s*(<[^>]*>)?\s*\(\s*$`,
+			// A field: with a modifier, private, typed or holding a function
+			`^\s*(` + jsModifiers + `\s+)+#?NAME\s*[?!]?\s*(:[^=;]+)?\s*(=|;|$)`,
+			`^\s*#NAME\s*(=|;|$)`,
+			`^\s*#?NAME\s*[?!]?\s*:\s*[^;,]+;\s*$`,
+			`^\s*(` + jsModifiers + `\s+)*#?NAME\s*(:[^=]+)?=\s*(async\s+)?(\([^()]*\)|\w+)\s*(:\s*[^=]+)?=>`,
+			// A function in an object: foo: function (, foo: (a) =>
+			`^\s*NAME\s*:\s*(async\s+)?(function\b|\([^()]*\)\s*(:\s*[^=]+)?=>|\w+\s*=>)`,
+		},
+		notDefinitions: []string{
+			`^\s*(return|if|for|while|switch|catch|else|new|await|throw|typeof|case|do|yield|delete|void)\b`,
+		},
 	},
 	"rust": {
 		declarations: []string{
@@ -137,6 +177,24 @@ var frameworks = map[string]framework{
 		definers: []definer{
 			{calls: []string{"scope", "has_many", "has_one", "belongs_to", "has_and_belongs_to_many"}},
 			{calls: []string{"delegate"}, everyArg: true},
+		},
+	},
+	"factory_bot": {
+		language: "ruby",
+		definers: []definer{
+			{calls: []string{"factory", "trait", "sequence"}},
+		},
+	},
+	"django": {
+		language: "python",
+		patterns: []string{
+			`^\s+NAME(\s*:[^=]+)?\s+=\s*(models|serializers|forms|filters)\.[A-Z]\w*\(`,
+		},
+	},
+	"sqlalchemy": {
+		language: "python",
+		patterns: []string{
+			`^\s+NAME(\s*:[^=]+)?\s+=\s*(\w+\.)?(Column|mapped_column|relationship|column_property|synonym)\(`,
 		},
 	},
 	"rspec": {
@@ -171,9 +229,11 @@ func definitionPatterns(lang, name string) []string {
 	if l.isConstant == nil || l.isConstant(name) {
 		patterns = append(patterns, l.constants...)
 	}
+	patterns = append(patterns, l.members...)
 	definers := append([]definer{}, l.definers...)
 	for _, key := range sortedKeys(frameworks) {
 		if f := frameworks[key]; f.language == lang {
+			patterns = append(patterns, f.patterns...)
 			definers = append(definers, f.definers...)
 		}
 	}
@@ -204,13 +264,33 @@ func SupportsDefinitions(path string) bool {
 	return ok
 }
 
-// definitionRegexp returns the regexp of a line defining name in lang, or nil
-// for a language not known, whose lines never count
-func definitionRegexp(lang, name string) *regexp.Regexp {
-	if _, ok := languages[lang]; !ok {
+// definitionMatcher tells the lines defining a name in one language
+type definitionMatcher struct {
+	def *regexp.Regexp
+	not *regexp.Regexp // nil when every line def matches counts
+}
+
+// MatchString reports whether line defines the name
+func (m *definitionMatcher) MatchString(line string) bool {
+	return m.def.MatchString(line) && (m.not == nil || !m.not.MatchString(line))
+}
+
+// newDefinitionMatcher returns the matcher of a line defining name in lang,
+// or nil for a language not known, whose lines never count
+func newDefinitionMatcher(lang, name string) *definitionMatcher {
+	l, ok := languages[lang]
+	if !ok {
 		return nil
 	}
-	patterns := definitionPatterns(lang, name)
+	m := &definitionMatcher{def: alternation(definitionPatterns(lang, name))}
+	if len(l.notDefinitions) > 0 {
+		m.not = alternation(l.notDefinitions)
+	}
+	return m
+}
+
+// alternation returns the regexp matching any of patterns
+func alternation(patterns []string) *regexp.Regexp {
 	return regexp.MustCompile("(?:" + strings.Join(patterns, ")|(?:") + ")")
 }
 
@@ -240,19 +320,19 @@ func FindDefinitions(repoRoot, name string) ([]Location, error) {
 // of the language of its file
 func parseDefinitions(output []byte, name string) []Location {
 	var locations []Location
-	defs := map[string]*regexp.Regexp{}
+	matchers := map[string]*definitionMatcher{}
 	for _, line := range bytes.Split(output, []byte("\n")) {
 		fields := bytes.SplitN(line, []byte{0}, 3)
 		if len(fields) != 3 {
 			continue
 		}
 		lang := LanguageOf(string(fields[0]))
-		def, ok := defs[lang]
+		m, ok := matchers[lang]
 		if !ok {
-			def = definitionRegexp(lang, name)
-			defs[lang] = def
+			m = newDefinitionMatcher(lang, name)
+			matchers[lang] = m
 		}
-		if def == nil || !def.Match(fields[2]) {
+		if m == nil || !m.MatchString(string(fields[2])) {
 			continue
 		}
 		n, err := strconv.Atoi(string(fields[1]))

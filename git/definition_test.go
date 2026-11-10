@@ -57,7 +57,7 @@ func TestDefinitionRegexp(t *testing.T) {
 		{"js", "  attr_reader :Foo", false},
 	}
 	for _, tt := range tests {
-		if got := definitionRegexp(tt.lang, "Foo").MatchString(tt.line); got != tt.want {
+		if got := newDefinitionMatcher(tt.lang, "Foo").MatchString(tt.line); got != tt.want {
 			t.Errorf("%s %q: match = %v, want %v", tt.lang, tt.line, got, tt.want)
 		}
 	}
@@ -65,18 +65,97 @@ func TestDefinitionRegexp(t *testing.T) {
 
 // A lowercase name is never a constant, so assigning to it does not count
 func TestDefinitionRegexpLocalVariable(t *testing.T) {
-	if definitionRegexp("ruby", "foo").MatchString("  foo = 1") {
+	if newDefinitionMatcher("ruby", "foo").MatchString("  foo = 1") {
 		t.Error("an assignment to a local variable counts as its definition")
 	}
-	if !definitionRegexp("ruby", "foo").MatchString("  attr_reader :foo") {
+	if !newDefinitionMatcher("ruby", "foo").MatchString("  attr_reader :foo") {
 		t.Error("attr_reader of a lowercase name does not count")
+	}
+}
+
+// Members of classes and objects, constants of a module, and what frameworks
+// define, with a lowercase name as they mostly have
+func TestDefinitionMembers(t *testing.T) {
+	tests := []struct {
+		lang string
+		line string
+		want bool
+	}{
+		// JavaScript / TypeScript methods
+		{"js", "  foo() {", true},
+		{"js", "  async foo(a, b) {", true},
+		{"js", "  static *foo() {", true},
+		{"js", "  get foo() {", true},
+		{"js", "  private async foo(a: string): Promise<void> {", true},
+		{"js", "  foo<T>(a: T): T {", true},
+		{"js", "  #foo() {", true},
+		{"js", "  public foo(", true},
+		{"js", "  foo(", false},
+		{"js", "  foo(a);", false},
+		{"js", "  foo(function () {", false},
+		{"js", "  foo(() => {", false},
+		{"js", "  foo(a, (b) => {", false},
+		{"js", "  if (foo) {", false},
+		{"js", "    foo(id: $id) {", false},
+		// JavaScript / TypeScript fields
+		{"js", "  foo: string;", true},
+		{"js", "  foo?: number;", true},
+		{"js", "  readonly foo: Map<string, number>;", true},
+		{"js", "  private foo = 1;", true},
+		{"js", "  static foo", true},
+		{"js", "  #foo = 1;", true},
+		{"js", "  foo = () => {", true},
+		{"js", "  foo = async (a: string) => {", true},
+		{"js", "  foo = 1;", false},
+		{"js", "  foo: 1,", false},
+		{"js", "  return foo;", false},
+		// Functions in an object
+		{"js", "  foo: function (a) {", true},
+		{"js", "  foo: async (a) => {", true},
+		{"js", "  foo: a => a + 1,", true},
+		{"js", "  foo: bar,", false},
+		// Python globals, annotated fields and frameworks
+		{"python", "foo = 1", true},
+		{"python", "foo: int = 1", true},
+		{"python", "foo == 1", false},
+		{"python", "    foo = 1", false},
+		{"python", "    foo: int", true},
+		{"python", "    foo: Optional[str] = None", true},
+		{"python", "    foo: Dict[str, int] = field(default_factory=dict)", true},
+		{"python", "    foo: int,", false},
+		{"python", "    foo: int = 0,", false},
+		{"python", "    foo = models.CharField(max_length=10)", true},
+		{"python", "    foo = models.ForeignKey(User, on_delete=models.CASCADE)", true},
+		{"python", "    foo = serializers.SerializerMethodField()", true},
+		{"python", "    foo = Column(Integer, primary_key=True)", true},
+		{"python", "    foo: Mapped[int] = mapped_column()", true},
+		{"python", "    foo = db.relationship('Bar')", true},
+		{"python", "    foo = bar(1)", false},
+		{"python", "    foo = models.split_texts(texts)", false},
+		{"python", "        foo=models.CharField(),", false},
+		{"python", "    else: foo", false},
+		// FactoryBot
+		{"ruby", "  factory :foo do", true},
+		{"ruby", "  factory :foo, class: 'User' do", true},
+		{"ruby", "    trait :foo do", true},
+		{"ruby", "    sequence(:foo) { |n| n }", true},
+		{"ruby", "    create(:foo)", false},
+		// Members of one language never count in another
+		{"ruby", "  foo() {", false},
+		{"python", "  private foo = 1;", false},
+		{"js", "    foo = models.CharField()", false},
+	}
+	for _, tt := range tests {
+		if got := newDefinitionMatcher(tt.lang, "foo").MatchString(tt.line); got != tt.want {
+			t.Errorf("%s %q: match = %v, want %v", tt.lang, tt.line, got, tt.want)
+		}
 	}
 }
 
 // The lines of a language not known never count
 func TestDefinitionRegexpUnknownLanguage(t *testing.T) {
 	for _, lang := range []string{".java", ""} {
-		if def := definitionRegexp(lang, "Foo"); def != nil {
+		if def := newDefinitionMatcher(lang, "Foo"); def != nil {
 			t.Errorf("%q: regexp = %v, want none", lang, def)
 		}
 	}
