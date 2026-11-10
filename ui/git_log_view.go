@@ -340,7 +340,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "File Diff"))
+	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "File Diff"))
 	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -352,7 +352,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Before"))
+	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "Before"))
 	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -360,7 +360,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "After"))
+	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "After"))
 	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 

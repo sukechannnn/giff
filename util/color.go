@@ -23,10 +23,10 @@ const (
 // stands out from the others at a glance
 const (
 	ModeTitleColor       = ColorColde("#FF79C6") // Mode: PR
-	WatchTitleColor      = ColorColde("#50FA7B") // Watch: on
+	WatchTitleColor      = ColorColde("#61AFEF") // Watch: on
 	WhitespaceTitleColor = ColorColde("#F1FA8C") // Hide whitespace: on
-	FileListTitleColor   = ColorColde("#8BE9FD") // the file list
-	DiffTitleColor       = ColorColde("#BD93F9") // the diff panes
+	FileListTitleColor   = ColorColde("#8BE9FD") // a file list other than the changes: PR, commit, file browser
+	PaneTitleColor       = ColorColde("#999999") // the other pane titles: key hints, Before / After
 )
 
 // TitleSeparator goes between the titles shown together on a border

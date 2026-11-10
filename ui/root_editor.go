@@ -210,7 +210,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	fileListView.SetBorder(true).SetTitle(util.ColoredTitle(util.FileListTitleColor, "j/k: navigate, Enter: switch to diff"))
+	fileListView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "j/k: navigate, Enter: switch to diff"))
 	fileListView.SetBorderColor(borderColor)
 	fileListView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -219,7 +219,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Enter: back to list"))
+	diffView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "Enter: back to list"))
 	diffView.SetBorderColor(borderColor)
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -233,7 +233,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "Before"))
+	beforeView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "Before"))
 	beforeView.SetBorderColor(borderColor)
 	beforeView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -241,7 +241,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(false)
-	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.DiffTitleColor, "After"))
+	afterView.SetBorder(true).SetTitle(util.ColoredTitle(util.PaneTitleColor, "After"))
 	afterView.SetBorderColor(borderColor)
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
@@ -1048,7 +1048,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.dirCollapseState = dirCollapseState
 		fileListKeyContext.filterQuery = &fileFilterQuery
 		fileListKeyContext.isFilterMode = &fileFilterMode
-		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "j/k: navigate, Enter: switch to diff"))
+		fileListView.SetTitle(util.ColoredTitle(util.PaneTitleColor, "j/k: navigate, Enter: switch to diff"))
 		// Restore diff view updater
 		if splitBeforeBrowser {
 			isSplitView = true
