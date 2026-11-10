@@ -345,7 +345,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	diffView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	unifiedViewFlex := tview.NewFlex().
-		AddItem(diffView, 0, 1, false)
+		AddItem(withFitTitle(diffView, diffView.Box), 0, 1, false)
 	unifiedViewFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	beforeView := tview.NewTextView().
@@ -365,8 +365,8 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	afterView.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	splitViewFlex := tview.NewFlex().
-		AddItem(beforeView, 0, 1, false).
-		AddItem(afterView, 0, 1, false)
+		AddItem(withFitTitle(beforeView, beforeView.Box), 0, 1, false).
+		AddItem(withFitTitle(afterView, afterView.Box), 0, 1, false)
 	splitViewFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Status bar
@@ -387,7 +387,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	contentFlex := tview.NewFlex()
 	contentFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 	contentFlex.
-		AddItem(fileListView, 0, FileListFlexRatio, true).
+		AddItem(withFitTitle(fileListView, fileListView.Box), 0, FileListFlexRatio, true).
 		AddItem(unifiedViewFlex, 0, DiffViewFlexRatio, false)
 
 	// '+' and '-' move the border between the file list and the diff
@@ -584,7 +584,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 			rightPane = splitViewFlex
 		}
 		contentFlex.
-			AddItem(fileListView, 0, fileListRatio, leftPaneFocused).
+			AddItem(withFitTitle(fileListView, fileListView.Box), 0, fileListRatio, leftPaneFocused).
 			AddItem(rightPane, 0, diffViewRatio, !leftPaneFocused)
 	}
 

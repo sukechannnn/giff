@@ -225,7 +225,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 	// Flex container for unified view
 	unifiedViewFlex := tview.NewFlex().
-		AddItem(diffView, 0, 1, false)
+		AddItem(withFitTitle(diffView, diffView.Box), 0, 1, false)
 	unifiedViewFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Create text views for split view
@@ -247,8 +247,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 	// Flex container for split view
 	splitViewFlex := tview.NewFlex().
-		AddItem(beforeView, 0, 1, false).
-		AddItem(afterView, 0, 1, false)
+		AddItem(withFitTitle(beforeView, beforeView.Box), 0, 1, false).
+		AddItem(withFitTitle(afterView, afterView.Box), 0, 1, false)
 	splitViewFlex.SetBackgroundColor(util.BackgroundColor.ToTcellColor())
 
 	// Save cursor restore flags (will be restored after fileList is built)
@@ -360,13 +360,13 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			rightPane = splitViewFlex
 		}
 		contentFlex.
-			AddItem(fileListView, 0, fileListRatio, leftPaneFocused).
+			AddItem(withFitTitle(fileListView, fileListView.Box), 0, fileListRatio, leftPaneFocused).
 			AddItem(rightPane, 0, diffViewRatio, !leftPaneFocused)
 	}
 
 	// Layout settings
 	contentFlex.
-		AddItem(fileListView, 0, FileListFlexRatio, true).
+		AddItem(withFitTitle(fileListView, fileListView.Box), 0, FileListFlexRatio, true).
 		AddItem(unifiedViewFlex, 0, DiffViewFlexRatio, false)
 
 	// Build file list content (colorized)
