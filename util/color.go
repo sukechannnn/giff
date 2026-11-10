@@ -32,9 +32,12 @@ const (
 // TitleSeparator goes between the titles shown together on a border
 var TitleSeparator = ColoredTitle(PlaceholderColor, " | ")
 
-// ColoredTitle returns text as a title drawn in c
+// ColoredTitle returns text as a title drawn in c. The background is spelled
+// out, as tview draws a title cut short to fit on black otherwise. It does not
+// reset the color at its end: tview would take the title for one cut short
+// and put an ellipsis on it, and what follows it sets a color of its own.
 func ColoredTitle(c ColorColde, text string) string {
-	return "[" + string(c) + "]" + tview.Escape(text) + "[-]"
+	return "[" + string(c) + ":" + string(BackgroundColor) + "]" + tview.Escape(text)
 }
 
 func (c ColorColde) hex() string {
