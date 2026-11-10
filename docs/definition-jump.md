@@ -32,9 +32,9 @@ matter of the language, the last one of a framework.
 | Kind | What it is | Examples |
 |---|---|---|
 | 1. Declaration | A line led by a keyword | `def foo`, `func Foo`, `class Foo`, `fn foo` |
-| 2. Constant | An assignment whose name says it is a constant | `FOO = 1` (Ruby: starts with an uppercase letter) |
-| 3. Member made by the language | A call of the language that defines what its arguments name | `attr_reader :foo`, `alias_method :foo, :bar` |
-| 4. Framework DSL | A call of a framework that defines what its arguments name | `scope :foo` (Rails), `let(:foo)` (RSpec) |
+| 2. Constant | An assignment whose name or place says it is a constant or a global | `FOO = 1` (Ruby: starts with an uppercase letter; Python: at the top of a module) |
+| 3. Member | A field, property or method of a class declared without a keyword, or made by a call of the language | `foo() {`, `foo: string;` (JS / TS), `foo: int` (Python), `attr_reader :foo` (Ruby) |
+| 4. Framework DSL | What a framework defines, mostly by a call naming it | `scope :foo` (Rails), `let(:foo)` (RSpec), `foo = models.CharField()` (Django) |
 
 An assignment to a local variable is not a definition, as the same name is
 assigned to all over a repository.
@@ -45,8 +45,8 @@ assigned to all over a repository.
 |---|---|---|---|---|
 | Go | `.go` | `func`, `type`, `var`, `const` | | |
 | Ruby | `.rb` `.rake` `.ru` `.gemspec` `.erb`, `Rakefile`, `Gemfile` | `def`, `class`, `module`, `alias` | `FOO = ...`, `FOO \|\|= ...` | `attr_reader` / `attr_writer` / `attr_accessor`, `alias_method`, `define_method` |
-| Python | `.py` `.pyi` | `def`, `class` | | |
-| JavaScript / TypeScript | `.js` `.jsx` `.mjs` `.cjs` `.ts` `.tsx` `.mts` `.cts` `.vue` `.svelte` | `function`, `class`, `interface`, `type`, `enum`, `const` / `let` / `var` | | |
+| Python | `.py` `.pyi` | `def`, `class` | `foo = ...` at the top of a module | Annotated fields, such as those of a dataclass: `foo: int`, `foo: str = ""` |
+| JavaScript / TypeScript | `.js` `.jsx` `.mjs` `.cjs` `.ts` `.tsx` `.mts` `.cts` `.vue` `.svelte` | `function`, `class`, `interface`, `type`, `enum`, `const` / `let` / `var` | | Methods: `foo() {`, `async foo(a) {`, `static foo() {`, `#foo() {`. Fields: `foo: string;`, `private foo = 1`, `#foo = 1`, `foo = () => {`. Functions in an object: `foo: function (`, `foo: (a) =>` |
 | Rust | `.rs` | `fn`, `struct`, `enum`, `trait`, `type`, `const`, `static`, `mod` | | |
 
 Ruby takes in `.erb` templates, and JavaScript / TypeScript `.vue` and
@@ -63,19 +63,25 @@ them: their calls are hardly ever a call of something else.
 |---|---|---|
 | Rails | Ruby | `scope`, `has_many`, `has_one`, `belongs_to`, `has_and_belongs_to_many`, `delegate` |
 | RSpec | Ruby | `let`, `let!`, `subject` |
+| FactoryBot | Ruby | `factory`, `trait`, `sequence` |
+| Django | Python | `foo = models.CharField(...)`, and the fields of `serializers`, `forms` and `filters` |
+| SQLAlchemy | Python | `foo = Column(...)`, `mapped_column`, `relationship`, `column_property`, `synonym` |
 
 ## Adding a language or a framework
 
 Everything lives in [`git/definition.go`](../git/definition.go).
 
 - **A language**: map its extensions to a key in `languageExtensions`, then add
-  an entry to `languages` with its `declarations` (and `constants`, `definers`
-  if it has them). Patterns put `NAME` where the name goes.
-- **A framework**: add an entry to `frameworks` with its language and the calls
-  that define things. A call naming what it defines by its first argument goes
+  an entry to `languages` with its `declarations` (and `constants`, `members`,
+  `definers` if it has them). Patterns put `NAME` where the name goes. Lines a
+  pattern of a member could take for a definition, such as an `if` statement,
+  go in `notDefinitions`.
+- **A framework**: add an entry to `frameworks` with its language, and the
+  `patterns` of the lines it defines things on or the calls that define
+  things. A call naming what it defines by its first argument goes
   in a `definer`, and one naming each of its leading arguments, like
   `attr_reader :a, :b`, sets `everyArg`. The language has to say how such a
   call reads with `firstArgCall` and `everyArgCall`.
 
-Add the lines that should and should not count to `TestDefinitionRegexp` in
-`git/definition_test.go`.
+Add the lines that should and should not count to `TestDefinitionRegexp` or
+`TestDefinitionMembers` in `git/definition_test.go`.
