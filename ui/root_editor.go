@@ -20,8 +20,8 @@ var preferUnstagedSection bool = false
 
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
-var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
-var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  C-e/C-y:scroll  Esc:back  q:quit"
+var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  b:branch  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
+var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  b:branch  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
 var restoreStatusFunc func()
@@ -1243,6 +1243,56 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			enterFileBrowser("", 0)
 		}
 	}
+
+	// 'b' lists the branches, the bases of the current branch's pull request
+	// first, and switches to the one picked: a pull request's branch is
+	// brought up to date with it, for 'pr' to show its diff.
+	switchBranchFunc := func() {
+		globalStatusView.SetText("[dimgray]Loading the branches...[-]")
+		go func() {
+			branches, current, err := git.Branches(repoRoot)
+			app.QueueUpdateDraw(func() {
+				if err != nil {
+					updateGlobalStatus(err.Error(), "tomato")
+					return
+				}
+				if len(branches) == 0 {
+					updateGlobalStatus("There is no other branch to switch to", "tomato")
+					return
+				}
+				restoreStatusFunc()
+				showBranchPicker(app, mainFlex, app.GetFocus(), branches, current, func(b git.Branch) {
+					globalStatusView.SetText("[dimgray]Switching to " + tview.Escape(b.Name) + "...[-]")
+					go func() {
+						err := git.SwitchBranch(repoRoot, b)
+						app.QueueUpdateDraw(func() {
+							if err != nil {
+								updateGlobalStatus("Failed to switch to "+tview.Escape(b.Name)+": "+tview.Escape(err.Error()), "tomato")
+								return
+							}
+							if isFileBrowserMode {
+								exitFileBrowser()
+							}
+							// The diff pane would point at a file of the old branch
+							leftPaneFocused = true
+							currentSelection = 0
+							refreshFileList()
+							updateFileListView()
+							updateSelectedFileDiff()
+							app.SetFocus(fileListView)
+							message := "Switched to " + tview.Escape(b.Name)
+							if b.PR != nil {
+								message += fmt.Sprintf(" (#%d)  pr: PR diff", b.PR.Number)
+							}
+							updateGlobalStatus(message, "forestgreen")
+						})
+					}()
+				})
+			})
+		}()
+	}
+	fileListKeyContext.switchBranch = switchBranchFunc
+	diffViewContext.switchBranch = switchBranchFunc
 
 	// 'f' in the diff pane shows the whole file under the cursor, and back.
 	diffViewContext.toggleFileView = func() {

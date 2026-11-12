@@ -74,6 +74,7 @@ $ giff -v         # show version
 | `n` / `N` | Next / prev grep hit (while a `/` grep is active) |
 | `Ctrl+L` | Git log |
 | `pr` | PR diff — the branch's changes as GitHub shows them, even after they are committed and pushed |
+| `b` | Switch branches — the local branches and those of the open pull requests, with their titles (the bases of the current branch's pull request first; a pull request's branch is checked out up to date with `gh pr checkout`) |
 | `t` | Open a terminal pane — run a command, `Tab` scrolls its output |
 | `Enter` | Switch to diff view |
 | `q` | Quit |
@@ -101,6 +102,7 @@ $ giff -v         # show version
 | `f` | Show the whole file at the cursor (`f` again returns to the diff) |
 | `Ctrl+L` | Copy `path:line` |
 | `pr` | PR diff |
+| `b` | Switch branches |
 | `Ctrl+E` / `Ctrl+Y` | Scroll |
 | `Esc` | Back to file list |
 | `q` | Quit |

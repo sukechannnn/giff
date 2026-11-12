@@ -735,6 +735,7 @@ type FileListKeyContext struct {
 	reload                 func()          // if non-nil, 'r' re-reads a read-only diff that can change
 	restoreStatus          func()          // if non-nil, restores this view's status instead of the main view's
 	toggleFileBrowser      func()          // if non-nil, toggles file browser mode
+	switchBranch           func()          // if non-nil, 'b' lists the branches to switch to
 	isFileBrowserMode      *bool           // pointer to file browser mode flag
 	resizeFileList         func(delta int) // resize file list width
 }
@@ -1278,6 +1279,11 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				return nil
 			case 'p':
 				ctx.pPressedAt = time.Now()
+				return nil
+			case 'b':
+				if ctx.switchBranch != nil {
+					ctx.switchBranch()
+				}
 				return nil
 			case 'r':
 				// pr -> pull request diff; a lone r reloads the pull request diff

@@ -95,6 +95,7 @@ type DiffViewContext struct {
 	pPressedAt             time.Time       // when 'p' was pressed, for the 'pr' sequence
 	reload                 func()          // if non-nil, 'r' re-reads a read-only diff that can change
 	toggleFileView         func()          // if non-nil, 'f' switches between the diff and the whole file
+	switchBranch           func()          // if non-nil, 'b' lists the branches to switch to
 	restoreStatus          func()          // if non-nil, restores this view's status instead of the main view's
 	resizeFileList         func(delta int) // resize file list width
 
@@ -518,6 +519,11 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				return nil
 			case 'p':
 				ctx.pPressedAt = time.Now()
+				return nil
+			case 'b':
+				if ctx.switchBranch != nil {
+					ctx.switchBranch()
+				}
 				return nil
 			case 'r':
 				// pr -> pull request diff; a lone r reloads the pull request diff
