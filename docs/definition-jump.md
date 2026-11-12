@@ -6,7 +6,8 @@ Put the word cursor on a name with `n` / `N`, then press `go`. giff shows where
 the name is defined in the file view, and `Ctrl+O` goes back to where `go` was
 pressed. When there are several definitions, a list with a preview of their
 code comes up to pick one from (`j` / `k` to select, `Enter` to open, `Esc` to
-cancel).
+cancel). It works in the PR diff (`pr`) too, as its files are those of the
+branch checked out.
 
 It needs nothing besides `git`, so it works the same over SSH or in a fresh
 container.

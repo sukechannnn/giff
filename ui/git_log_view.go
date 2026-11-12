@@ -308,7 +308,7 @@ func (glv *GitLogView) showCommitDetails() {
 
 	commitHash := entry.Hash
 	glv.loadCommitFiles(commitHash)
-	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", "", glv.commitFiles, func(opts []string, paths ...string) []string {
+	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", "", false, glv.commitFiles, func(opts []string, paths ...string) []string {
 		args := append([]string{"show", "--format="}, opts...)
 		args = append(args, commitHash, "--")
 		return append(args, paths...)
@@ -324,7 +324,11 @@ func (glv *GitLogView) showCommitDetails() {
 // 'r'. It is nil for a fixed diff. onEsc leaves the view.
 //
 // A non-empty mode, such as "PR", is shown on top of the status bar.
-func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
+//
+// With workTree, the after side of the diff is the working tree, as in the
+// pull request diff of the branch checked out, so 'f' shows the whole file
+// there and 'go' jumps to a definition.
+func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, workTree bool, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
 	// Create UI components (same pattern as root_editor.go)
 	fileListView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -381,6 +385,9 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	commitStatusMessage := "j/k:move  /:grep  !:exclude  e:fold  s:split  w:ws  V:select  c/v:editor  C-y:copy  t:terminal  Esc:back  q:quit"
 	if reload != nil {
 		commitStatusMessage = strings.Replace(commitStatusMessage, "  Esc:back", "  r:reload  Esc:back", 1)
+	}
+	if workTree {
+		commitStatusMessage = strings.Replace(commitStatusMessage, "  t:terminal", "  f:file  go:definition  t:terminal", 1)
 	}
 	statusView.SetText(commitStatusMessage)
 
@@ -672,7 +679,14 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		}
 	}
 
+	// leaveFileView puts the diff pane back from the whole file to the diff,
+	// before a file of the list is shown; nil without workTree
+	var leaveFileView func()
+
 	updateSelectedFileDiff := func() {
+		if leaveFileView != nil {
+			leaveFileView()
+		}
 		if len(fileList) == 0 {
 			currentDiffText = ""
 			currentFile = ""
@@ -911,6 +925,28 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		return false
 	}
 
+	// backToDiff leaves the whole file for the diff, if it is shown
+	var backToDiff func()
+	if workTree {
+		backToDiff = setupReadOnlyFileView(readOnlyFileViewState{
+			app:                    app,
+			repoRoot:               repoRoot,
+			diffView:               diffView,
+			ctx:                    diffViewContext,
+			fileListContext:        fileListKeyContext,
+			fileList:               &fileList,
+			selection:              &currentSelection,
+			searchQuery:            &searchQuery,
+			searchMatches:          &searchMatches,
+			searchMatchIndex:       &searchMatchIndex,
+			rebuildContentFlex:     rebuildContentFlex,
+			updateFileListView:     updateFileListView,
+			updateSelectedFileDiff: updateSelectedFileDiff,
+			updateGlobalStatus:     updateGlobalStatus,
+			leaveFileView:          &leaveFileView,
+		})
+	}
+
 	if reload != nil {
 		setupReadOnlyReload(readOnlyReloadState{
 			app:          app,
@@ -943,6 +979,16 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 			restoreStatus:          restoreStatus,
 			fileListContext:        fileListKeyContext,
 		})
+	}
+
+	// 'r' re-reads the diff of the file selected in the list
+	if backToDiff != nil && diffViewContext.reload != nil {
+		reloadNow := diffViewContext.reload
+		diffViewContext.reload = func() {
+			backToDiff()
+			reloadNow()
+		}
+		fileListKeyContext.reload = diffViewContext.reload
 	}
 
 	// Switch display
