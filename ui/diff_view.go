@@ -1316,6 +1316,22 @@ func findSearchMatches(diffText string, isSplitView bool, foldState *FoldState, 
 	return searchInUnifiedContent(getCachedUnifiedContent(diffText, foldState, filePath, repoRoot), query)
 }
 
+// searchInFileLines returns the indices of the lines of a file shown in the
+// file view that contain query, ignoring case like searchInUnifiedContent
+func searchInFileLines(content, query string) []int {
+	if query == "" {
+		return nil
+	}
+	needle := strings.ToLower(query)
+	var matches []int
+	for i, line := range fileViewLines(content) {
+		if strings.Contains(strings.ToLower(line), needle) {
+			matches = append(matches, i)
+		}
+	}
+	return matches
+}
+
 // refreshSearchMatches recomputes the active search's matches for the current
 // view after switching between unified and split view, whose rows differ, and
 // puts the cursor on the match it was at.

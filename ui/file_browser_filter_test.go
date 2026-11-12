@@ -20,7 +20,7 @@ func TestExpandAllDirectoriesOpensNestedDirectories(t *testing.T) {
 	collapseState := NewDirCollapseState()
 	filterQuery := ""
 	build := func() {
-		BuildFileListContentForBrowser(files, 0, true, &fileList, lineNumberMap, collapseState, filterQuery)
+		BuildFileListContentForBrowser(files, 0, true, &fileList, lineNumberMap, collapseState, filterQuery, nil)
 	}
 
 	// The browser starts with every directory collapsed.

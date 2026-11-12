@@ -13,6 +13,7 @@ const (
 	GrepStageStaged    = "staged"
 	GrepStageUnstaged  = "unstaged"
 	GrepStageUntracked = "untracked"
+	GrepStageBrowser   = "browser" // the file browser, which greps whole files
 )
 
 // DiffGrepKey builds the key used to look up a file's hit count. Paths alone

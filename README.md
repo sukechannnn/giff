@@ -66,7 +66,7 @@ $ giff -v         # show version
 | `Ctrl+J` | Amend |
 | `s` | Split view |
 | `w` | Hide whitespace |
-| `/` | Grep the diffs (narrows the list to files with matching changed lines) |
+| `/` | Grep the diffs (narrows the list to files with matching changed lines; in the file browser, files with matching lines) |
 | `Ctrl+F` | Filter files by name (globs, and comma separated lists) |
 | `!` | Hide files by path — the inverse of `Ctrl+F`, e.g. `generated,node_modules` |
 | `v` | Open in $EDITOR (at the current hit while a `/` grep is active) |

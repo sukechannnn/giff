@@ -399,6 +399,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			lineNumberMap,
 			browserCollapseState,
 			browserFilterQuery,
+			diffGrepHits,
 		)
 	}
 
@@ -533,10 +534,27 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		return strings.Join(parts, "  ")
 	}
 
-	// runDiffGrep greps the changed lines of every pending diff and remembers
-	// the hits, so the file list can be narrowed to the matching files.
+	// grepHits greps the changed lines of every pending diff, or in the file
+	// browser the lines of every file it lists
+	grepHits := func(query string) (map[string]int, error) {
+		if !isFileBrowserMode {
+			return git.GrepDiff(repoRoot, query, *untrackedFilesPtr, ignoreWhitespace)
+		}
+		hits, err := git.GrepFiles(browserRoot, query)
+		if err != nil {
+			return nil, err
+		}
+		keyed := make(map[string]int, len(hits))
+		for path, n := range hits {
+			keyed[git.DiffGrepKey(git.GrepStageBrowser, path)] = n
+		}
+		return keyed, nil
+	}
+
+	// runDiffGrep greps and remembers the hits, so the file list can be
+	// narrowed to the matching files.
 	runDiffGrep := func(query string) error {
-		hits, err := git.GrepDiff(repoRoot, query, *untrackedFilesPtr, ignoreWhitespace)
+		hits, err := grepHits(query)
 		if err != nil {
 			return err
 		}
@@ -552,7 +570,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		if diffGrepQuery == "" {
 			return
 		}
-		if hits, err := git.GrepDiff(repoRoot, diffGrepQuery, *untrackedFilesPtr, ignoreWhitespace); err == nil {
+		if hits, err := grepHits(diffGrepQuery); err == nil {
 			diffGrepHits = hits
 		}
 	}
@@ -627,7 +645,22 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			}
 			currentDiffText = content
 			cursorY = 0
-			renderFileView(diffView, content, -1, -1, -1, false, currentFile, "")
+			if diffGrepQuery == "" {
+				renderFileView(diffView, content, -1, -1, -1, false, currentFile, "")
+				return
+			}
+			// Show where the grep matched, with the cursor on the first match,
+			// so n/N can walk the matches.
+			searchQuery = diffGrepQuery
+			searchMatches = searchInFileLines(content, searchQuery)
+			searchMatchIndex = -1
+			cursorLine := -1
+			if len(searchMatches) > 0 {
+				searchMatchIndex = 0
+				cursorY = searchMatches[0]
+				cursorLine = cursorY
+			}
+			renderFileView(diffView, content, cursorLine, -1, -1, false, currentFile, searchQuery)
 			return
 		}
 
@@ -1045,6 +1078,14 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		jumpHistory = nil
 		isFileBrowserMode = false
 		browserRoot = repoRoot
+		// The browser's grep hit whole files, which mean nothing to the diffs.
+		if diffGrepQuery != "" {
+			diffGrepQuery = ""
+			diffGrepHits = nil
+			searchQuery = ""
+			searchMatches = nil
+			searchMatchIndex = -1
+		}
 		fileListKeyContext.dirCollapseState = dirCollapseState
 		fileListKeyContext.filterQuery = &fileFilterQuery
 		fileListKeyContext.isFilterMode = &fileFilterMode
@@ -1094,7 +1135,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		for dir := filepath.Dir(target); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
 			browserCollapseState.SetCollapsed("browser", filepath.ToSlash(dir), false)
 		}
-		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "", nil)
 		for i, entry := range fileList {
 			if !entry.IsDirectory && entry.Path == target {
 				currentSelection = i
@@ -1161,7 +1202,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		// Collapse all directories by default
 		browserCollapseState = NewDirCollapseState()
 		// Build initial list to find directories
-		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "")
+		BuildFileListContentForBrowser(browserFiles, 0, true, &fileList, lineNumberMap, browserCollapseState, "", nil)
 		for _, entry := range fileList {
 			if entry.IsDirectory {
 				browserCollapseState.SetCollapsed("browser", entry.Path, true)

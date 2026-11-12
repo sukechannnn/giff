@@ -259,13 +259,13 @@ type filterInputKind int
 
 const (
 	filterInputFileName filterInputKind = iota // Ctrl+F, keeps matching files
-	filterInputDiffGrep                        // '/', keeps files with matching changed lines
+	filterInputDiffGrep                        // '/', keeps files with matching changed lines, or in the file browser matching lines
 	filterInputExclude                         // '!', drops matching files
 )
 
 // Prompts marking which file list input mode is running.
 const (
-	diffGrepPrompt    = "/"
+	diffGrepPrompt    = "grep:"
 	fileFilterPrompt  = "filter:"
 	fileExcludePrompt = "!"
 )
@@ -595,6 +595,8 @@ func BuildFileListContentForCommit(
 
 // BuildFileListContentForBrowser builds file list content for file browser mode.
 // Uses git.FileInfo list (all tracked files) and renders with tree structure.
+// While a grep is active (grepHits is non-nil) only the files it hit are
+// listed, each with its hit count.
 func BuildFileListContentForBrowser(
 	allFiles []git.FileInfo,
 	currentSelection int,
@@ -603,6 +605,7 @@ func BuildFileListContentForBrowser(
 	lineNumberMap map[int]int,
 	collapseState *DirCollapseState,
 	filterQuery string,
+	grepHits map[string]int,
 ) string {
 	*fileList = (*fileList)[:0]
 	for k := range lineNumberMap {
@@ -611,12 +614,17 @@ func BuildFileListContentForBrowser(
 
 	// Apply filter (supports glob patterns)
 	var filtered []git.FileInfo
-	if filterQuery != "" {
+	if filterQuery != "" || grepHits != nil {
 		for _, f := range allFiles {
-			entry := FileEntry{Path: f.Path}
-			if matchesFilter(entry, filterQuery) {
-				filtered = append(filtered, f)
+			if filterQuery != "" && !matchesFilter(FileEntry{Path: f.Path}, filterQuery) {
+				continue
 			}
+			if grepHits != nil {
+				if _, ok := grepHits[git.DiffGrepKey(git.GrepStageBrowser, f.Path)]; !ok {
+					continue
+				}
+			}
+			filtered = append(filtered, f)
 		}
 	} else {
 		filtered = allFiles
@@ -634,8 +642,8 @@ func BuildFileListContentForBrowser(
 
 	renderFileTreeForGitFiles(
 		tree, 0, "", &content, fileList,
-		"browser", &regionIndex, currentSelection, focusedPane,
-		lineNumberMap, &currentLine, filtered, collapseState, statusMap, nil, nil,
+		git.GrepStageBrowser, &regionIndex, currentSelection, focusedPane,
+		lineNumberMap, &currentLine, filtered, collapseState, statusMap, nil, grepHits,
 	)
 
 	return content.String()
@@ -1380,11 +1388,9 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				return nil
 			case '/':
 				// Grep the diffs: the pending ones, or those of the commit or
-				// pull request being viewed. The file browser shows plain files,
-				// so '/' keeps filtering by file name there.
-				inBrowser := ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode
+				// pull request being viewed. The file browser greps its files.
 				kind := filterInputDiffGrep
-				if ctx.runDiffGrep == nil || inBrowser {
+				if ctx.runDiffGrep == nil {
 					kind = filterInputFileName
 				}
 				startFilterInput(ctx, kind)
