@@ -525,6 +525,10 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	updateStatusTitle := func() {
 		var titleParts []string
 		if mode != "" {
+			// The PR diff is the diff of the branch checked out
+			if branch := git.CurrentBranch(repoRoot); branch != "" {
+				titleParts = append(titleParts, util.ColoredTitle(util.BranchTitleColor, "Branch: "+branch))
+			}
 			titleParts = append(titleParts, util.ColoredTitle(util.ModeTitleColor, "Mode: "+mode))
 		}
 		if ignoreWhitespace {

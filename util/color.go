@@ -22,6 +22,7 @@ const (
 // The colors of the pane and status bar titles, one for each kind, so each
 // stands out from the others at a glance
 const (
+	BranchTitleColor     = ColorColde("#98C379") // Branch: the branch checked out
 	ModeTitleColor       = ColorColde("#FF79C6") // Mode: PR
 	WatchTitleColor      = ColorColde("#61AFEF") // Watch: on
 	WhitespaceTitleColor = ColorColde("#F1FA8C") // Hide whitespace: on

@@ -159,9 +159,16 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// Fold state for managing expandable ranges
 	foldState := NewFoldState()
 
+	// The branch checked out, shown first in the status bar title. It is read
+	// again whenever the file list is.
+	currentBranch := git.CurrentBranch(repoRoot)
+
 	// Function to update the status bar title
 	updateStatusTitle := func() {
 		var titleParts []string
+		if currentBranch != "" {
+			titleParts = append(titleParts, util.ColoredTitle(util.BranchTitleColor, "Branch: "+currentBranch))
+		}
 		if enableAutoRefresh {
 			titleParts = append(titleParts, util.ColoredTitle(util.WatchTitleColor, "Watch: on"))
 		}
@@ -585,6 +592,11 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			*untrackedFilesPtr = newUntracked
 		}
 		refreshDiffGrep()
+		// The branch may have been switched outside giff too
+		if branch := git.CurrentBranch(repoRoot); branch != currentBranch {
+			currentBranch = branch
+			updateStatusTitle()
+		}
 	}
 
 	// applyGrepSearchToDiff installs the active diff grep as the diff view's
