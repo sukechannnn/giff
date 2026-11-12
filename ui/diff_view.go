@@ -402,11 +402,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			// Return to left pane
 			*ctx.leftPaneFocused = true
 			restoreStatus(ctx.restoreStatus)
-			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-			} else {
-				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-			}
+			redrawWithoutCursor(ctx)
 			ctx.updateFileListView()
 			ctx.app.SetFocus(ctx.fileListView)
 			return nil
@@ -421,12 +417,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			*ctx.selectEnd = -1
 			*ctx.leftPaneFocused = true
 			restoreStatus(ctx.restoreStatus)
-			// Redraw diff view without cursor
-			if *ctx.isSplitView {
-				updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-			} else {
-				updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-			}
+			redrawWithoutCursor(ctx)
 			ctx.updateFileListView()
 			ctx.app.SetFocus(ctx.fileListView)
 			return nil
@@ -1373,6 +1364,19 @@ func nearestInMap(m map[int]int, idx int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// redrawWithoutCursor draws the diff pane without its cursor, for when the
+// focus goes back to the file list
+func redrawWithoutCursor(ctx *DiffViewContext) {
+	switch {
+	case inFileView(ctx):
+		ctx.viewUpdater.UpdateWithoutCursor(*ctx.currentDiffText)
+	case *ctx.isSplitView:
+		updateSplitViewWithoutCursor(ctx.beforeView, ctx.afterView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+	default:
+		updateDiffViewWithoutCursor(ctx.diffView, *ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+	}
 }
 
 // inFileView reports whether the pane shows a whole file instead of a diff
