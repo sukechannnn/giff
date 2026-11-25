@@ -620,6 +620,76 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
+	// The blame of the file browser: 'b' shows, to the left of the file, the
+	// commit that last changed each line, and the one of the cursor's line in
+	// the status bar. It is read in the background, once per file content.
+	var blameShown bool
+	type blameResult struct {
+		content string
+		lines   []git.BlameLine
+		gutter  []string
+	}
+	blameCache := map[string]blameResult{}
+	blameLoading := map[string]bool{}
+	// blameLoaded redraws the file shown when its blame has been read
+	var blameLoaded func(content string)
+	currentBlame := func() *blameResult {
+		if !blameShown || !isFileBrowserMode || currentFile == "" || browserRoot != repoRoot {
+			return nil
+		}
+		if r, ok := blameCache[currentFile]; ok && r.content == currentDiffText {
+			return &r
+		}
+		path, content := currentFile, currentDiffText
+		if !blameLoading[path] {
+			blameLoading[path] = true
+			go func() {
+				lines, err := git.Blame(repoRoot, path)
+				app.QueueUpdateDraw(func() {
+					delete(blameLoading, path)
+					// A failure is kept too, not to run git blame again on every key
+					result := blameResult{content: content}
+					if err == nil {
+						result.lines = lines
+						result.gutter = blameGutter(lines)
+					}
+					blameCache[path] = result
+					if !blameShown || !isFileBrowserMode || currentFile != path || currentDiffText != content {
+						return
+					}
+					if err != nil {
+						updateGlobalStatus("No blame for "+tview.Escape(path)+": "+tview.Escape(err.Error()), "tomato")
+						return
+					}
+					if blameLoaded != nil {
+						blameLoaded(content)
+					}
+				})
+			}()
+		}
+		return nil
+	}
+	currentBlameGutter := func() []string {
+		if r := currentBlame(); r != nil {
+			return r.gutter
+		}
+		return nil
+	}
+	showLineBlame := func(cursorY int) {
+		if r := currentBlame(); r != nil && cursorY < len(r.lines) {
+			globalStatusView.SetText(blameStatus(r.lines[cursorY]))
+		}
+	}
+	newFileViewUpdater := func() *FileViewUpdater {
+		return &FileViewUpdater{
+			diffView:    diffView,
+			filePath:    &currentFile,
+			searchQuery: &searchQuery,
+			blame:       currentBlameGutter,
+			onCursor:    showLineBlame,
+		}
+	}
+
 	// readBrowserFile reads path under root as the file browser shows it
 	readBrowserFile := func(root, path string) (string, error) {
 		isBinary, err := util.IsBinaryFile(path, root)
@@ -662,7 +732,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			currentDiffText = content
 			cursorY = 0
 			if diffGrepQuery == "" {
-				renderFileView(diffView, content, -1, -1, -1, false, currentFile, "")
+				renderFileViewWithGutter(diffView, content, -1, -1, -1, false, currentFile, "", currentBlameGutter())
 				return
 			}
 			// Show where the grep matched, with the cursor on the first match,
@@ -676,7 +746,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				cursorY = searchMatches[0]
 				cursorLine = cursorY
 			}
-			renderFileView(diffView, content, cursorLine, -1, -1, false, currentFile, searchQuery)
+			renderFileViewWithGutter(diffView, content, cursorLine, -1, -1, false, currentFile, searchQuery, currentBlameGutter())
 			return
 		}
 
@@ -1232,11 +1302,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.isFilterMode = &browserFilterMode
 		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "File Browser (f: back to diff)"))
 		// Switch diff view to file viewer updater
-		diffViewContext.viewUpdater = &FileViewUpdater{
-			diffView:    diffView,
-			filePath:    &currentFile,
-			searchQuery: &searchQuery,
-		}
+		diffViewContext.viewUpdater = newFileViewUpdater()
 		updateFileListView()
 		updateSelectedFileDiff()
 		if target != "" && !leftPaneFocused {
@@ -1402,11 +1468,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		fileListKeyContext.filterQuery = &browserFilterQuery
 		fileListKeyContext.isFilterMode = &browserFilterMode
 		fileListView.SetTitle(util.ColoredTitle(util.FileListTitleColor, "File Browser (f: back to diff)"))
-		diffViewContext.viewUpdater = &FileViewUpdater{
-			diffView:    diffView,
-			filePath:    &currentFile,
-			searchQuery: &searchQuery,
-		}
+		diffViewContext.viewUpdater = newFileViewUpdater()
 		updateFileListView()
 		updateSelectedFileDiff()
 	}
@@ -1428,6 +1490,36 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 		diffView.ScrollTo(row, col)
 	}
+
+	// 'b' in the file browser shows or hides the blame, and switches
+	// branches elsewhere
+	blameLoaded = redrawBrowserFile
+	toggleBlame := func() {
+		if browserRoot != repoRoot {
+			updateGlobalStatus("Blame is not available for a file outside the repository", "tomato")
+			return
+		}
+		blameShown = !blameShown
+		if blameShown {
+			// Commits made since the last time change the blame of the same content
+			blameCache = map[string]blameResult{}
+			updateGlobalStatus("Blame shown  b:hide", "forestgreen")
+		} else {
+			updateGlobalStatus("Blame hidden", "forestgreen")
+		}
+		if currentFile != "" && currentDiffText != "" {
+			redrawBrowserFile(currentDiffText)
+		}
+	}
+	branchOrBlame := func() {
+		if isFileBrowserMode {
+			toggleBlame()
+			return
+		}
+		switchBranchFunc()
+	}
+	fileListKeyContext.switchBranch = branchOrBlame
+	diffViewContext.switchBranch = branchOrBlame
 
 	// Start goroutine only when auto-refresh is enabled
 	if enableAutoRefresh {

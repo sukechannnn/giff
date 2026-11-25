@@ -448,18 +448,38 @@ type FileViewUpdater struct {
 	diffView    *tview.TextView
 	filePath    *string
 	searchQuery *string
+	// blame, if non-nil, returns the blame gutter of the file shown, nil
+	// while it is not shown
+	blame func() []string
+	// onCursor, if non-nil, is called with the line the cursor is put on
+	onCursor func(cursorY int)
 }
 
 func (f *FileViewUpdater) UpdateWithoutCursor(content string) {
-	renderFileView(f.diffView, content, -1, -1, -1, false, *f.filePath, f.getSearchQuery())
+	renderFileViewWithGutter(f.diffView, content, -1, -1, -1, false, *f.filePath, f.getSearchQuery(), f.gutter())
 }
 
 func (f *FileViewUpdater) UpdateWithCursor(content string, cursorY int) {
-	renderFileView(f.diffView, content, cursorY, -1, -1, false, *f.filePath, f.getSearchQuery())
+	renderFileViewWithGutter(f.diffView, content, cursorY, -1, -1, false, *f.filePath, f.getSearchQuery(), f.gutter())
+	f.cursorMoved(cursorY)
 }
 
 func (f *FileViewUpdater) UpdateWithSelection(content string, cursorY int, selectStart int, selectEnd int, isSelecting bool) {
-	renderFileView(f.diffView, content, cursorY, selectStart, selectEnd, isSelecting, *f.filePath, f.getSearchQuery())
+	renderFileViewWithGutter(f.diffView, content, cursorY, selectStart, selectEnd, isSelecting, *f.filePath, f.getSearchQuery(), f.gutter())
+	f.cursorMoved(cursorY)
+}
+
+func (f *FileViewUpdater) gutter() []string {
+	if f.blame != nil {
+		return f.blame()
+	}
+	return nil
+}
+
+func (f *FileViewUpdater) cursorMoved(cursorY int) {
+	if f.onCursor != nil && cursorY >= 0 {
+		f.onCursor(cursorY)
+	}
 }
 
 func (f *FileViewUpdater) getSearchQuery() string {
@@ -471,6 +491,12 @@ func (f *FileViewUpdater) getSearchQuery() string {
 
 // renderFileView renders file content with syntax highlighting and line numbers
 func renderFileView(diffView *tview.TextView, content string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string, searchQuery string) {
+	renderFileViewWithGutter(diffView, content, cursorY, selectStart, selectEnd, isSelecting, filePath, searchQuery, nil)
+}
+
+// renderFileViewWithGutter renders the file like renderFileView, with
+// gutter[i], when gutter is non-nil, to the left of line i: the blame
+func renderFileViewWithGutter(diffView *tview.TextView, content string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string, searchQuery string, gutter []string) {
 	diffView.Clear()
 
 	if content == "" {
@@ -495,6 +521,14 @@ func renderFileView(diffView *tview.TextView, content string, cursorY int, selec
 
 	for i, line := range lines {
 		lineNum := fmt.Sprintf("[dimgray]%*d │ [-]", maxDigits, i+1)
+		prefix := ""
+		if gutter != nil {
+			if i < len(gutter) {
+				prefix = gutter[i] + " "
+			} else {
+				prefix = strings.Repeat(" ", blameGutterWidth+1)
+			}
+		}
 
 		var lineContent string
 		if allTokens != nil && i < len(allTokens) && len(allTokens[i]) > 0 {
@@ -525,9 +559,9 @@ func renderFileView(diffView *tview.TextView, content string, cursorY int, selec
 				highlighted = util.ReplaceBackgroundPreserving(lineContent, bg, []string{util.SearchHighlightBg})
 			}
 			highlighted = util.EnsureReadableForeground(highlighted, bg)
-			diffView.Write([]byte("[" + lineNumFg + ":" + bg + "]" + fmt.Sprintf("%*d │ ", maxDigits, i+1) + highlighted + strings.Repeat(" ", 500) + "[-:-]\n"))
+			diffView.Write([]byte("[:" + bg + "]" + prefix + "[" + lineNumFg + ":" + bg + "]" + fmt.Sprintf("%*d │ ", maxDigits, i+1) + highlighted + strings.Repeat(" ", 500) + "[-:-]\n"))
 		} else {
-			diffView.Write([]byte(lineNum + lineContent + "\n"))
+			diffView.Write([]byte(prefix + lineNum + lineContent + "\n"))
 		}
 	}
 

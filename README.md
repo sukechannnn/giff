@@ -74,7 +74,7 @@ $ giff -v         # show version
 | `n` / `N` | Next / prev grep hit (while a `/` grep is active) |
 | `Ctrl+L` | Git log |
 | `pr` | PR diff — the branch's changes as GitHub shows them, even after they are committed and pushed |
-| `b` | Switch branches — the local branches and those of the open pull requests, with their titles (the bases of the current branch's pull request first; a pull request's branch is checked out up to date with `gh pr checkout`) |
+| `b` | Switch branches — the local branches and those of the open pull requests, with their titles (the bases of the current branch's pull request first; a pull request's branch is checked out up to date with `gh pr checkout`). In the file browser (`f`), `b` shows or hides the blame instead: the commit that last changed each line on its left, and the one of the cursor's line in the status bar |
 | `f` | File browser — the files tracked in the repository, opened at the file under the cursor (`f` again returns to the diffs) |
 | `t` | Open a terminal pane — run a command, `Tab` scrolls its output |
 | `Enter` | Switch to diff view |
@@ -104,7 +104,7 @@ $ giff -v         # show version
 | `f` | Show the whole file at the cursor (`f` again returns to the diff) |
 | `Ctrl+L` | Copy `path:line` |
 | `pr` | PR diff |
-| `b` | Switch branches |
+| `b` | Switch branches (in the file browser, show / hide the blame) |
 | `Ctrl+F` | Filter files by name (the focus goes to the file list) |
 | `Ctrl+E` / `Ctrl+Y` | Scroll |
 | `Esc` | Back to file list |
