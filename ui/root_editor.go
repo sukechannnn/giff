@@ -620,6 +620,18 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 
+	// readBrowserFile reads path under root as the file browser shows it
+	readBrowserFile := func(root, path string) (string, error) {
+		isBinary, err := util.IsBinaryFile(path, root)
+		if err != nil {
+			return "", err
+		}
+		if isBinary {
+			return util.FormatBinaryNotice(path), nil
+		}
+		return util.ReadFileContent(path, root)
+	}
+
 	// Function to update the diff of the selected file
 	updateSelectedFileDiff := func() {
 		// File browser mode: show file content
@@ -641,15 +653,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 				return
 			}
 			currentFile = entry.Path
-			var content string
-			isBinary, err := util.IsBinaryFile(entry.Path, browserRoot)
-			if err == nil {
-				if isBinary {
-					content = util.FormatBinaryNotice(entry.Path)
-				} else {
-					content, err = util.ReadFileContent(entry.Path, browserRoot)
-				}
-			}
+			content, err := readBrowserFile(browserRoot, entry.Path)
 			if err != nil {
 				diffView.SetText("[red]Error reading file: " + err.Error() + "[-]")
 				currentDiffText = ""
@@ -1397,6 +1401,24 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		updateSelectedFileDiff()
 	}
 
+	// redrawBrowserFile shows content as the new content of the file shown in
+	// the file browser, keeping the cursor, the scroll and the search
+	redrawBrowserFile := func(content string) {
+		currentDiffText = content
+		cursorY = max(min(cursorY, len(fileViewLines(content))-1), 0)
+		if searchQuery != "" {
+			searchMatches = searchInFileLines(content, searchQuery)
+			searchMatchIndex = min(searchMatchIndex, len(searchMatches)-1)
+		}
+		row, col := diffView.GetScrollOffset()
+		if leftPaneFocused {
+			diffViewContext.viewUpdater.UpdateWithoutCursor(content)
+		} else {
+			diffViewContext.viewUpdater.UpdateWithSelection(content, cursorY, selectStart, selectEnd, isSelecting)
+		}
+		diffView.ScrollTo(row, col)
+	}
+
 	// Start goroutine only when auto-refresh is enabled
 	if enableAutoRefresh {
 		stopRefresh := make(chan bool)
@@ -1444,8 +1466,21 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 			for {
 				select {
 				case <-ticker.C:
-					// Skip auto-refresh in file browser mode
+					// The file browser shows plain files: re-read the one shown
 					if isFileBrowserMode {
+						path, root, shown := currentFile, browserRoot, currentDiffText
+						if path == "" {
+							continue
+						}
+						content, err := readBrowserFile(root, path)
+						if err != nil || content == shown {
+							continue
+						}
+						app.QueueUpdateDraw(func() {
+							if isFileBrowserMode && currentFile == path && currentDiffText == shown {
+								redrawBrowserFile(content)
+							}
+						})
 						continue
 					}
 					// Get new file list
