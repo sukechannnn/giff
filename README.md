@@ -75,6 +75,7 @@ $ giff -v         # show version
 | `Ctrl+L` | Git log |
 | `pr` | PR diff — the branch's changes as GitHub shows them, even after they are committed and pushed |
 | `b` | Switch branches — the local branches and those of the open pull requests, with their titles (the bases of the current branch's pull request first; a pull request's branch is checked out up to date with `gh pr checkout`) |
+| `f` | File browser — the files tracked in the repository, opened at the file under the cursor (`f` again returns to the diffs) |
 | `t` | Open a terminal pane — run a command, `Tab` scrolls its output |
 | `Enter` | Switch to diff view |
 | `q` | Quit |

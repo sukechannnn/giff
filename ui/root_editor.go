@@ -1255,9 +1255,19 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	fileListKeyContext.toggleFileBrowser = func() {
 		if isFileBrowserMode {
 			exitFileBrowser()
-		} else {
-			enterFileBrowser("", 0)
+			return
 		}
+		// The file under the cursor opens in the browser, unless it is gone
+		// from the working tree
+		target := ""
+		if currentSelection >= 0 && currentSelection < len(fileList) {
+			if entry := fileList[currentSelection]; !entry.IsDirectory && entry.Path != "" {
+				if _, err := os.Stat(filepath.Join(repoRoot, entry.Path)); err == nil {
+					target = entry.Path
+				}
+			}
+		}
+		enterFileBrowser(target, 0)
 	}
 
 	// 'b' lists the branches, the bases of the current branch's pull request
