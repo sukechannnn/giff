@@ -119,6 +119,9 @@ type DiffViewContext struct {
 	// commentEditing is the comment being written under its lines, nil when
 	// none is
 	commentEditing *commentEditing
+	// redrawComments, if non-nil, draws the pane again when the comments
+	// change, in place of drawing it plainly
+	redrawComments func()
 }
 
 // applyUndoRedoInDiffView runs the given undo/redo action and refreshes both

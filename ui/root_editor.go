@@ -1542,7 +1542,8 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		}
 	}
 	if repoRoot != "" {
-		go watchCommentAnswers(app, repoRoot, func(message string) { updateGlobalStatus(message, "forestgreen") }, redrawCurrentDiff)
+		diffViewContext.redrawComments = redrawCurrentDiff
+		go watchCommentAnswers(app, repoRoot, func(message string) { updateGlobalStatus(message, "forestgreen") }, refreshCommentPanes)
 	}
 	toggleBlame := func() {
 		if browserRoot != repoRoot {

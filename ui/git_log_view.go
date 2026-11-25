@@ -329,6 +329,17 @@ func (glv *GitLogView) showCommitDetails() {
 // pull request diff of the branch checked out, so 'f' shows the whole file
 // there and 'go' jumps to a definition.
 func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, commentView string, workTree bool, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
+	// Leaving the view, its diff pane no longer shows the comments
+	var commentPane *DiffViewContext
+	leave := onEsc
+	onEsc = func() {
+		if commentPane != nil {
+			unregisterCommentViews(commentPane)
+		}
+		if leave != nil {
+			leave()
+		}
+	}
 	// Create UI components (same pattern as root_editor.go)
 	fileListView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -997,6 +1008,7 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		startFilterInput(fileListKeyContext, filterInputFileName)
 	}
 	diffViewContext.commentView = func() string { return commentView }
+	commentPane = diffViewContext
 	fileListKeyContext.showComments = func() { showComments(diffViewContext) }
 
 	// Switch display

@@ -49,6 +49,51 @@ func registerCommentViews(ctx *DiffViewContext) {
 	}
 }
 
+// unregisterCommentViews forgets the diff pane of ctx, once it is closed
+func unregisterCommentViews(ctx *DiffViewContext) {
+	for view, c := range commentHosts {
+		if c == ctx {
+			delete(commentHosts, view)
+		}
+	}
+}
+
+// refreshCommentPanes draws again every diff pane open, as its comments may
+// have changed: answered by Claude Code, or deleted in another pane
+func refreshCommentPanes() {
+	seen := map[*DiffViewContext]bool{}
+	for _, ctx := range commentHosts {
+		if seen[ctx] {
+			continue
+		}
+		seen[ctx] = true
+		if ctx.redrawComments != nil {
+			ctx.redrawComments()
+			continue
+		}
+		if ctx.viewUpdater == nil || ctx.currentFile == nil || *ctx.currentFile == "" || ctx.currentDiffText == nil {
+			continue
+		}
+		if ctx.leftPaneFocused == nil || !*ctx.leftPaneFocused {
+			redrawDiffPane(ctx)
+			continue
+		}
+		// Without the cursor, where the file list left the scroll
+		views := []*tview.TextView{ctx.diffView}
+		if *ctx.isSplitView && !inFileView(ctx) {
+			views = []*tview.TextView{ctx.beforeView, ctx.afterView}
+		}
+		rows, cols := make([]int, len(views)), make([]int, len(views))
+		for i, v := range views {
+			rows[i], cols[i] = v.GetScrollOffset()
+		}
+		ctx.viewUpdater.UpdateWithoutCursor(*ctx.currentDiffText)
+		for i, v := range views {
+			v.ScrollTo(rows[i], cols[i])
+		}
+	}
+}
+
 // commentCache keeps the comments of a repository read until their file
 // changes
 type commentCache struct {
