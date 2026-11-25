@@ -770,6 +770,8 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		unifiedViewFlex: unifiedViewFlex,
 		contentFlex:     contentFlex,
 		app:             app,
+		// The root the definition picker is put over and restores
+		mainView:        host,
 
 		cursorY:               &cursorY,
 		selectStart:           &selectStart,
