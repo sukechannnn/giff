@@ -738,45 +738,12 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					}
 
 					var startLine, endLine int
-					if _, ok := ctx.viewUpdater.(*FileViewUpdater); ok {
+					if inFileView(ctx) {
 						// File viewer mode: line number = index + 1
 						startLine = start + 1
 						endLine = end + 1
 					} else {
-						// Diff mode: use line number mapping
-						if *ctx.isSplitView {
-							content := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-							if ds, de, ok := content.DiffRange(start, end); ok {
-								start, end = ds, de
-							}
-						} else {
-							displayMapping := MapUnifiedDisplayToOriginalIdx(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-							if ms, ok := displayMapping[start]; ok {
-								start = ms
-							}
-							if me, ok := displayMapping[end]; ok {
-								end = me
-							}
-						}
-
-						_, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
-						startLine = -1
-						endLine = -1
-						for i := start; i <= end; i++ {
-							// Reference the file as it is now: a '-' line is
-							// gone from it, so resolve to the nearest line that
-							// still exists rather than its old number.
-							num, ok := nearestInMap(newLineMap, i)
-							if !ok {
-								continue
-							}
-							if startLine == -1 || num < startLine {
-								startLine = num
-							}
-							if num > endLine {
-								endLine = num
-							}
-						}
+						startLine, endLine = diffRowsFileLineRange(ctx, start, end)
 					}
 
 					if startLine >= 0 {
@@ -1399,6 +1366,61 @@ func nearestInMap(m map[int]int, idx int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// diffRowsFileLineRange returns the first and last lines of the file as it
+// is now that the diff pane's rows start to end show, or -1, -1 when they
+// show none. A '-' line is gone from the file, so it counts as the nearest
+// line that still exists; an expanded fold row shows its own line.
+func diffRowsFileLineRange(ctx *DiffViewContext, start, end int) (int, int) {
+	_, newLineMap := createLineNumberMapping(*ctx.currentDiffText)
+	first, last := -1, -1
+	add := func(num int) {
+		if first == -1 || num < first {
+			first = num
+		}
+		if num > last {
+			last = num
+		}
+	}
+	addDiffLines := func(from, to int) {
+		for i := from; i <= to; i++ {
+			if num, ok := nearestInMap(newLineMap, i); ok {
+				add(num)
+			}
+		}
+	}
+
+	if *ctx.isSplitView {
+		rows := getCachedSplitContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot).Rows
+		for r := max(start, 0); r <= end && r < len(rows); r++ {
+			switch row := rows[r]; {
+			case row.FileLine > 0:
+				add(row.FileLine)
+			case row.DiffStart >= 0:
+				addDiffLines(row.DiffStart, row.DiffEnd)
+			}
+		}
+		return first, last
+	}
+
+	lines := getCachedUnifiedContent(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot).Lines
+	diffIdx := 0
+	for r := 0; r <= end && r < len(lines); r++ {
+		line := lines[r]
+		if line.FoldID != "" {
+			// A fold indicator or an expanded fold line, not a diff line
+			if r >= start && line.FileLine > 0 {
+				add(line.FileLine)
+			}
+			continue
+		}
+		if r >= start {
+			addDiffLines(diffIdx, diffIdx)
+		}
+		diffIdx++
+	}
+	return first, last
 }
 
 // focusFileList gives the focus back to the file list, drawing the diff

@@ -250,6 +250,80 @@ func TestGetCursorFileLineNumberOnExpandedFoldLines(t *testing.T) {
 	}
 }
 
+func TestDiffRowsFileLineRangeTakesInExpandedFoldLines(t *testing.T) {
+	// The same file as above: line 1 is always shown expanded above the
+	// hunk, and lines 9-30 are folded below it until expanded.
+	repoRoot := t.TempDir()
+	var file strings.Builder
+	for i := 1; i <= 30; i++ {
+		if i == 5 {
+			file.WriteString("five\n")
+		} else {
+			fmt.Fprintf(&file, "%d\n", i)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "f.txt"), []byte(file.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diff := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n"
+
+	for _, split := range []bool{false, true} {
+		InvalidateUnifiedContentCache()
+		InvalidateSplitContentCache()
+		cursorY := 0
+		splitView := split
+		filePath := "f.txt"
+		diffText := diff
+		foldState := NewFoldState()
+		ctx := &DiffViewContext{
+			currentDiffText: &diffText,
+			currentFile:     &filePath,
+			cursorY:         &cursorY,
+			isSplitView:     &splitView,
+			foldState:       foldState,
+			repoRoot:        repoRoot,
+		}
+		rows := GetUnifiedViewLineCount(diffText, foldState, filePath, repoRoot)
+		if split {
+			rows = len(getCachedSplitContent(diffText, foldState, filePath, repoRoot).Rows)
+		}
+		// The row showing line 5 as it is now
+		five := -1
+		for r := 0; r < rows && five < 0; r++ {
+			cursorY = r
+			if getCursorFileLineNumber(ctx) == 5 {
+				five = r
+			}
+		}
+		if five < 0 {
+			t.Fatalf("split=%v: no row shows line 5", split)
+		}
+
+		if first, last := diffRowsFileLineRange(ctx, 0, five); first != 1 || last != 5 {
+			t.Errorf("split=%v: rows 0-%d = lines %d-%d, want 1-5", split, five, first, last)
+		}
+
+		// Expand the fold below the hunk, then select down to its last line
+		foldID := GetFoldIDAtLine(diffText, rows-1, foldState, filePath, repoRoot)
+		if split {
+			foldID = getCachedSplitContent(diffText, foldState, filePath, repoRoot).Rows[rows-1].FoldID
+		}
+		if foldID == "" {
+			t.Fatalf("split=%v: the last row is not a fold", split)
+		}
+		foldState.ToggleExpand(foldID)
+		InvalidateUnifiedContentCache()
+		InvalidateSplitContentCache()
+		rows = GetUnifiedViewLineCount(diffText, foldState, filePath, repoRoot)
+		if split {
+			rows = len(getCachedSplitContent(diffText, foldState, filePath, repoRoot).Rows)
+		}
+		if first, last := diffRowsFileLineRange(ctx, five, rows-1); first != 5 || last != 30 {
+			t.Errorf("split=%v: rows %d-%d = lines %d-%d, want 5-30", split, five, rows-1, first, last)
+		}
+	}
+}
+
 func TestBuildFileListContentWithExclusion(t *testing.T) {
 	modified := []git.FileInfo{
 		{Path: "app/graphql/generated/types.ts", ChangeStatus: "modified"},
