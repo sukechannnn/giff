@@ -991,6 +991,10 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 		fileListKeyContext.reload = diffViewContext.reload
 	}
 
+	diffViewContext.filterFiles = func() {
+		startFilterInput(fileListKeyContext, filterInputFileName)
+	}
+
 	// Switch display
 	host.Clear()
 	host.AddItem(commitMainFlex, 0, 1, true)

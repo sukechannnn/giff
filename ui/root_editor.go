@@ -21,7 +21,7 @@ var preferUnstagedSection bool = false
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
 var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  b:branch  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
-var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  b:branch  C-e/C-y:scroll  Esc:back  q:quit"
+var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  n/N:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  b:branch  C-f:filter  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
 var restoreStatusFunc func()
@@ -1305,6 +1305,9 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	}
 	fileListKeyContext.switchBranch = switchBranchFunc
 	diffViewContext.switchBranch = switchBranchFunc
+	diffViewContext.filterFiles = func() {
+		startFilterInput(fileListKeyContext, filterInputFileName)
+	}
 
 	// 'f' in the diff pane shows the whole file under the cursor, and back.
 	diffViewContext.toggleFileView = func() {

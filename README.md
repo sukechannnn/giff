@@ -104,6 +104,7 @@ $ giff -v         # show version
 | `Ctrl+L` | Copy `path:line` |
 | `pr` | PR diff |
 | `b` | Switch branches |
+| `Ctrl+F` | Filter files by name (the focus goes to the file list) |
 | `Ctrl+E` / `Ctrl+Y` | Scroll |
 | `Esc` | Back to file list |
 | `q` | Quit |

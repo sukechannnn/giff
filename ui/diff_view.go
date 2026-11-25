@@ -96,6 +96,7 @@ type DiffViewContext struct {
 	reload                 func()          // if non-nil, 'r' re-reads a read-only diff that can change
 	toggleFileView         func()          // if non-nil, 'f' switches between the diff and the whole file
 	switchBranch           func()          // if non-nil, 'b' lists the branches to switch to
+	filterFiles            func()          // if non-nil, Ctrl+F filters the file list by name from the diff pane
 	restoreStatus          func()          // if non-nil, restores this view's status instead of the main view's
 	resizeFileList         func(delta int) // resize file list width
 
@@ -410,11 +411,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				return nil
 			}
 			// Return to left pane
-			*ctx.leftPaneFocused = true
-			restoreStatus(ctx.restoreStatus)
-			redrawWithoutCursor(ctx)
-			ctx.updateFileListView()
-			ctx.app.SetFocus(ctx.fileListView)
+			focusFileList(ctx)
 			return nil
 		case tcell.KeyEnter:
 			if wordCursorActive(ctx) {
@@ -425,11 +422,18 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			*ctx.isSelecting = false
 			*ctx.selectStart = -1
 			*ctx.selectEnd = -1
-			*ctx.leftPaneFocused = true
-			restoreStatus(ctx.restoreStatus)
-			redrawWithoutCursor(ctx)
-			ctx.updateFileListView()
-			ctx.app.SetFocus(ctx.fileListView)
+			focusFileList(ctx)
+			return nil
+		case tcell.KeyCtrlF:
+			// The filter is typed into the file list, so the focus goes there
+			if ctx.filterFiles == nil {
+				return nil
+			}
+			*ctx.isSelecting = false
+			*ctx.selectStart = -1
+			*ctx.selectEnd = -1
+			focusFileList(ctx)
+			ctx.filterFiles()
 			return nil
 		case tcell.KeyCtrlO:
 			// Ctrl+O: back to where go was pressed
@@ -1395,6 +1399,16 @@ func nearestInMap(m map[int]int, idx int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// focusFileList gives the focus back to the file list, drawing the diff
+// pane without its cursor
+func focusFileList(ctx *DiffViewContext) {
+	*ctx.leftPaneFocused = true
+	restoreStatus(ctx.restoreStatus)
+	redrawWithoutCursor(ctx)
+	ctx.updateFileListView()
+	ctx.app.SetFocus(ctx.fileListView)
 }
 
 // redrawWithoutCursor draws the diff pane without its cursor, for when the
