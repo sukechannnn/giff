@@ -92,6 +92,7 @@ $ giff -v         # show version
 | `/` | Search |
 | `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
 | `n` / `N` (no search) | Move a cursor word by word, on to the next / prev line at the end, highlighting every occurrence of the word; `Enter` jumps to the next one, `Esc` drops it |
+| `l` / `h` (on a word) | Stretch the word under the `n` cursor over the next / previous word, with what lies between, e.g. `scheduled` → `scheduled-ecs` → `scheduled-ecs-task` (outside a word, they scroll sideways) |
 | `go` | Jump to the definition of the word under the `n` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; on the `source` of a Terraform module, the module's files; see [the details](./docs/definition-jump.md)) |
 | `Ctrl+O` | Back to where `go` was pressed |
 | `e` | Toggle fold |

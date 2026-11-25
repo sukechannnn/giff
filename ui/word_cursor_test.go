@@ -196,3 +196,40 @@ func TestScrollUpKeepsVisibleCursor(t *testing.T) {
 		}
 	}
 }
+
+func TestExtendWord(t *testing.T) {
+	ctx := newWordCursorContext("diff --git a/f.go b/f.go\n--- a/f.go\n+++ b/f.go\n@@ -1,1 +1,1 @@\n-x\n+  source = \"../../modules/scheduled-ecs-task\"\n")
+	row := -1
+	var start wordSpan
+	for r := 0; r < viewRowCount(ctx) && row < 0; r++ {
+		for _, w := range rowWords(ctx, r) {
+			if w.text == "scheduled" {
+				row, start = r, w
+				break
+			}
+		}
+	}
+	if row < 0 {
+		t.Fatal("no row has the word scheduled")
+	}
+	selectWord(ctx, row, start)
+
+	steps := []struct {
+		direction int
+		want      string
+	}{
+		{1, "scheduled-ecs"},
+		{1, "scheduled-ecs-task"},
+		{1, "scheduled-ecs-task"}, // the end of the row
+		{-1, "modules/scheduled-ecs-task"},
+	}
+	for _, s := range steps {
+		extendWord(ctx, s.direction)
+		if ctx.word.text != s.want || *ctx.searchQuery != s.want {
+			t.Errorf("extendWord(%d) = %q (query %q), want %q", s.direction, ctx.word.text, *ctx.searchQuery, s.want)
+		}
+		if !wordCursorActive(ctx) {
+			t.Errorf("extendWord(%d) left the word cursor", s.direction)
+		}
+	}
+}

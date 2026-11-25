@@ -175,6 +175,40 @@ func moveWordCursor(ctx *DiffViewContext, direction int) {
 	selectWord(ctx, row, words[next])
 }
 
+// extendWord stretches the word cursor over the next word of its row
+// (direction > 0) or the previous one, taking in what lies between, so a
+// name such as scheduled-ecs-task can be picked a word at a time. It stays
+// put at the end or the start of the row.
+func extendWord(ctx *DiffViewContext, direction int) {
+	row := *ctx.cursorY
+	texts := rowTexts(ctx, row)
+	if ctx.word.side >= len(texts) {
+		return
+	}
+	span := ctx.word
+	words := lineWords(texts[span.side], span.side)
+	if direction > 0 {
+		for _, w := range words {
+			if w.start >= span.end {
+				span.end = w.end
+				break
+			}
+		}
+	} else {
+		for i := len(words) - 1; i >= 0; i-- {
+			if words[i].end <= span.start {
+				span.start = words[i].start
+				break
+			}
+		}
+	}
+	if span == ctx.word {
+		return
+	}
+	span.text = string([]rune(texts[span.side])[span.start:span.end])
+	selectWord(ctx, row, span)
+}
+
 // selectWord puts the word cursor on word of row and searches for it right
 // away, so every occurrence lights up
 func selectWord(ctx *DiffViewContext, row int, word wordSpan) {
@@ -282,6 +316,6 @@ func showWordCursorStatus(ctx *DiffViewContext) {
 	if ctx.setGlobalStatusText == nil {
 		return
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  go:definition  y:yank  Esc:cancel",
+	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  l/h:extend right/left  go:definition  y:yank  Esc:cancel",
 		tview.Escape(ctx.word.text), *ctx.searchMatchIndex+1, len(*ctx.searchMatches)))
 }

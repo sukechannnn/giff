@@ -364,6 +364,15 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				yankWord(ctx)
 				return nil
 			}
+			// 'l' / 'h' take in the next / previous word too
+			if event.Key() == tcell.KeyRune && (event.Rune() == 'l' || event.Rune() == 'h') {
+				direction := 1
+				if event.Rune() == 'h' {
+					direction = -1
+				}
+				extendWord(ctx, direction)
+				return nil
+			}
 			// Scrolling keeps it too, so the search can be looked over, and so
 			// does the g of go
 			wordKey := event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyEsc ||
