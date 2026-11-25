@@ -1557,16 +1557,17 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 					ctx.updateSelectedFileDiff()
 				}
 				return nil
-			case 'd': // 'd' to discard changes, or back to diff/log
+			case 'd': // 'd' to discard changes
+				// The file browser, the PR diff and the Git log have none
 				if ctx.isFileBrowserMode != nil && *ctx.isFileBrowserMode {
-					if ctx.toggleFileBrowser != nil {
-						ctx.toggleFileBrowser()
+					if ctx.updateGlobalStatus != nil {
+						ctx.updateGlobalStatus("Nothing to discard in the file browser (f: back to diff)", "tomato")
 					}
 					return nil
 				}
 				if ctx.readOnly {
-					if ctx.onEsc != nil {
-						ctx.onEsc()
+					if ctx.updateGlobalStatus != nil {
+						ctx.updateGlobalStatus("Nothing to discard here (Esc: back)", "tomato")
 					}
 					return nil
 				}

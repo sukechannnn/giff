@@ -888,11 +888,9 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'd':
-				// In read-only mode (git log), 'd' exits back
+				// Nothing can be discarded from the PR diff or the Git log
 				if ctx.readOnly {
-					if ctx.onEsc != nil {
-						ctx.onEsc()
-					}
+					ctx.updateGlobalStatus("Nothing to discard here (Esc: back)", "tomato")
 					return nil
 				}
 				discardSelectedLines(ctx)

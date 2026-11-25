@@ -1028,12 +1028,6 @@ func (glv *GitLogView) setupLogKeyBindings() {
 		}
 
 		switch event.Rune() {
-		case 'd':
-			// Return to diff mode
-			if glv.onExit != nil {
-				glv.onExit()
-			}
-			return nil
 		case 'q':
 			glv.quitApplication()
 			return nil
