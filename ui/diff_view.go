@@ -175,20 +175,7 @@ func applyUndoRedoInDiffView(ctx *DiffViewContext, action func() (string, error)
 
 // moveCursorDown moves the cursor down by one line (same behavior as 'j').
 func moveCursorDown(ctx *DiffViewContext) {
-	maxLines := 0
-	if *ctx.isSplitView {
-		splitViewLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-		if splitViewLines > 0 {
-			maxLines = splitViewLines - 1
-		}
-	} else {
-		if len(strings.TrimSpace(*ctx.currentDiffText)) > 0 {
-			lineCount := GetUnifiedViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-			if lineCount > 0 {
-				maxLines = lineCount - 1
-			}
-		}
-	}
+	maxLines := max(viewRowCount(ctx)-1, 0)
 
 	if *ctx.cursorY < maxLines {
 		(*ctx.cursorY)++
@@ -226,7 +213,7 @@ func scrollBottomRow(view *tview.TextView, topRow int) int {
 func scrollDiffView(ctx *DiffViewContext, direction int) {
 	if *ctx.isSplitView {
 		currentRow, _ := ctx.beforeView.GetScrollOffset()
-		maxLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		maxLines := viewRowCount(ctx)
 
 		nextRow := currentRow + direction
 		// Update scroll position (keep within range)
@@ -255,7 +242,7 @@ func scrollDiffView(ctx *DiffViewContext, direction int) {
 	} else {
 		// Unified view case
 		currentRow, _ := ctx.diffView.GetScrollOffset()
-		maxLines := GetUnifiedViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
+		maxLines := viewRowCount(ctx)
 
 		nextRow := currentRow + direction
 		// Update scroll position (keep within range)
@@ -566,21 +553,8 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'G': // Shift+G -> go to bottom
-				maxLines := 0
-				if *ctx.isSplitView {
-					// For split view, get valid line count
-					splitViewLines := getSplitViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-					if splitViewLines > 0 {
-						maxLines = splitViewLines - 1
-					}
-				} else {
-					// For normal view, get display line count (including folds)
-					lineCount := GetUnifiedViewLineCount(*ctx.currentDiffText, ctx.foldState, *ctx.currentFile, ctx.repoRoot)
-					if lineCount > 0 {
-						maxLines = lineCount - 1
-					}
-				}
-				*ctx.cursorY = maxLines
+				// The display line count, folds included, or the file's lines
+				*ctx.cursorY = max(viewRowCount(ctx)-1, 0)
 				if *ctx.isSelecting {
 					*ctx.selectEnd = *ctx.cursorY
 				}
