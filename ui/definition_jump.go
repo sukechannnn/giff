@@ -19,11 +19,23 @@ const definitionPreviewRows = 12
 
 // jumpToDefinition shows the definition of the word cursor's word in the file
 // view. When git grep turns up more than one, a picker lists them with a
-// preview of the code, and the one picked is shown.
+// preview of the code, and the one picked is shown. On the source of a
+// Terraform module, it shows the module's files instead, with or without the
+// word cursor.
 func jumpToDefinition(ctx *DiffViewContext) {
 	if ctx.jumpTo == nil {
 		ctx.updateGlobalStatus("Jump to definition is not available here", "tomato")
 		return
+	}
+	if git.IsTerraformFile(*ctx.currentFile) {
+		// The after side first in split view, as the file is now
+		texts := rowTexts(ctx, *ctx.cursorY)
+		for i := len(texts) - 1; i >= 0; i-- {
+			if source, dir, ok := git.TerraformModuleSource(*ctx.currentFile, texts[i]); ok {
+				jumpToTerraformModule(ctx, source, dir)
+				return
+			}
+		}
 	}
 	if !wordCursorActive(ctx) {
 		ctx.updateGlobalStatus("Put the cursor on a word with n first, then go", "tomato")
@@ -62,7 +74,49 @@ func jumpToDefinition(ctx *DiffViewContext) {
 	case len(defs) == 1:
 		showDefinition(ctx, defs[0], word)
 	default:
-		showDefinitionPicker(ctx, defs, word, (here+1)%len(defs))
+		title := fmt.Sprintf(" %d definitions of %s  (j/k:select  Enter:open  Esc:cancel) ", len(defs), tview.Escape(word))
+		showDefinitionPicker(ctx, defs, title, word, (here+1)%len(defs), func(d git.Location) {
+			showDefinition(ctx, d, word)
+		})
+	}
+}
+
+// jumpToTerraformModule shows the module that source, the source of a
+// module block, points to: its one Terraform file, or a picker of them with
+// main.tf first. dir is the module's directory, "" when it is not in the
+// repository.
+func jumpToTerraformModule(ctx *DiffViewContext, source, dir string) {
+	if dir == "" {
+		ctx.updateGlobalStatus(tview.Escape(source)+" is not a module in the repository", "tomato")
+		return
+	}
+	files, err := git.TerraformModuleFiles(ctx.repoRoot, dir)
+	if err != nil {
+		ctx.updateGlobalStatus("Cannot open the module "+tview.Escape(dir)+": it is not in the working tree", "tomato")
+		return
+	}
+	switch len(files) {
+	case 0:
+		ctx.updateGlobalStatus("No Terraform file in "+tview.Escape(dir), "tomato")
+	case 1:
+		showModuleFile(ctx, files[0])
+	default:
+		title := fmt.Sprintf(" %d files of the module %s  (j/k:select  Enter:open  Esc:cancel) ", len(files), tview.Escape(dir))
+		showDefinitionPicker(ctx, files, title, "", 0, func(d git.Location) {
+			showModuleFile(ctx, d)
+		})
+	}
+}
+
+// showModuleFile shows a file of a Terraform module from its top
+func showModuleFile(ctx *DiffViewContext, d git.Location) {
+	ctx.jumpTo(d)
+	if *ctx.currentFile != d.Path || !inFileView(ctx) {
+		// The file could not be opened, and the status says why
+		return
+	}
+	if ctx.setGlobalStatusText != nil {
+		ctx.setGlobalStatusText(fmt.Sprintf("[white]%s[-]  C-o:back", tview.Escape(d.Path)))
 	}
 }
 
@@ -116,10 +170,11 @@ func showDefinition(ctx *DiffViewContext, d git.Location, word string) {
 	}
 }
 
-// showDefinitionPicker lists defs over the main view, with the code around
-// the selected one below the list, starting at selected. Enter shows the
-// selected definition, and Esc closes the picker.
-func showDefinitionPicker(ctx *DiffViewContext, defs []git.Location, word string, selected int) {
+// showDefinitionPicker lists defs over the main view under title, with the
+// code around the selected one below the list and word lit up in it,
+// starting at selected. Enter calls open with the selected one, and Esc
+// closes the picker.
+func showDefinitionPicker(ctx *DiffViewContext, defs []git.Location, title, word string, selected int, open func(git.Location)) {
 	closePicker := func() {
 		ctx.app.SetRoot(ctx.mainView, true)
 		if *ctx.isSplitView {
@@ -169,7 +224,7 @@ func showDefinitionPicker(ctx *DiffViewContext, defs []git.Location, word string
 	list.SetChangedFunc(func(i int, _, _ string, _ rune) { showPreview(i) })
 	list.SetSelectedFunc(func(i int, _, _ string, _ rune) {
 		closePicker()
-		showDefinition(ctx, defs[i], word)
+		open(defs[i])
 	})
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
@@ -193,7 +248,7 @@ func showDefinitionPicker(ctx *DiffViewContext, defs []git.Location, word string
 	box.SetBackgroundColor(background)
 	box.SetBorder(true).
 		SetBorderColor(tcell.GetColor(string(util.CommitAreaBorderColor))).
-		SetTitle(fmt.Sprintf(" %d definitions of %s  (j/k:select  Enter:open  Esc:cancel) ", len(defs), tview.Escape(word)))
+		SetTitle(title)
 
 	// Centred over the main view, which shows around it
 	height := listRows + definitionPreviewRows + 4

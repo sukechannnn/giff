@@ -55,6 +55,19 @@ Ruby takes in `.erb` templates, and JavaScript / TypeScript `.vue` and
 any other language `go` says it is not supported, and the lines of such files
 never count as definitions.
 
+## Terraform modules
+
+On the `source` line of a `module` block in a `.tf` file, `go` opens the
+module it points to, wherever the cursor is on the line: its one `.tf` file,
+or a list of them to pick from with `main.tf` first. Only a local path
+(`./` or `../`) in the repository can be opened, not a module of the
+registry or of a Git URL.
+
+```hcl
+module "sync_companies_monthly_scheduler" {
+  source = "../../modules/scheduled-ecs-task"
+```
+
 ## Supported frameworks
 
 They count in the files of their language, whether or not the repository uses
