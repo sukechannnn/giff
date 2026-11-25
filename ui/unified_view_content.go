@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/rivo/tview"
@@ -219,7 +217,7 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 	maxDigits := calculateMaxLineNumberDigits(oldLineMap, newLineMap)
 
 	// Get total lines in file for top/bottom fold detection
-	totalLines := getFileTotalLines(filePath, repoRoot)
+	totalLines := getFileTotalLines(diffText, filePath, repoRoot)
 
 	// Detect foldable ranges (minimum 3 lines gap)
 	foldableRanges := detectFoldableRanges(diffText, 3, totalLines)
@@ -245,7 +243,7 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 
 	// Insert top fold indicator/content at the beginning
 	if topFold != nil {
-		appendFoldContent(content, topFold, foldState, filePath, repoRoot, maxDigits, tokenSource)
+		appendFoldContent(content, topFold, foldState, diffText, filePath, repoRoot, maxDigits, tokenSource)
 	}
 
 	for i, cl := range coloredLines {
@@ -259,23 +257,23 @@ func generateUnifiedViewContent(diffText string, oldLineMap, newLineMap map[int]
 
 		// Check if we should insert a fold indicator after this line
 		if fold, exists := foldMap[i]; exists {
-			appendFoldContent(content, fold, foldState, filePath, repoRoot, maxDigits, tokenSource)
+			appendFoldContent(content, fold, foldState, diffText, filePath, repoRoot, maxDigits, tokenSource)
 		}
 	}
 
 	// Insert bottom fold indicator/content at the end
 	if bottomFold != nil {
-		appendFoldContent(content, bottomFold, foldState, filePath, repoRoot, maxDigits, tokenSource)
+		appendFoldContent(content, bottomFold, foldState, diffText, filePath, repoRoot, maxDigits, tokenSource)
 	}
 
 	return content
 }
 
 // appendFoldContent appends fold indicator or expanded content to the unified view
-func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldState *FoldState, filePath, repoRoot string, maxDigits int, tokenSource *diffTokenSource) {
+func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldState *FoldState, diffText, filePath, repoRoot string, maxDigits int, tokenSource *diffTokenSource) {
 	if fold.Fixed || (foldState != nil && foldState.IsExpanded(fold.ID)) {
 		// Expanded: show actual file content
-		expandedLines := readFileLines(filePath, repoRoot, fold.StartLine, fold.EndLine)
+		expandedLines := readFileLines(diffText, filePath, repoRoot, fold.StartLine, fold.EndLine)
 
 		for lineIdx, expandedLine := range expandedLines {
 			actualLineNum := fold.StartLine + lineIdx
@@ -312,18 +310,15 @@ func appendFoldContent(content *UnifiedViewContent, fold *FoldableRange, foldSta
 	}
 }
 
-// getFileTotalLines returns the total number of lines in a file
-func getFileTotalLines(filePath, repoRoot string) int {
-	if filePath == "" || repoRoot == "" {
-		return 0
-	}
-	fullPath := filepath.Join(repoRoot, filePath)
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
+// getFileTotalLines returns the total number of lines in the file of the
+// diff's new side
+func getFileTotalLines(diffText, filePath, repoRoot string) int {
+	content, ok := newSideContent(diffText, filePath, repoRoot)
+	if !ok {
 		return 0
 	}
 	// A trailing newline terminates the last line rather than starting a new one
-	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	return len(lines)
 }
 
@@ -352,15 +347,15 @@ func GetFoldIndicatorPosition(diffText string, foldID string, foldState *FoldSta
 	return 0
 }
 
-// readFileLines reads lines from a file within the specified range (1-indexed, inclusive)
-func readFileLines(filePath, repoRoot string, startLine, endLine int) []string {
-	fullPath := filepath.Join(repoRoot, filePath)
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
-		return []string{fmt.Sprintf("Error reading file: %v", err)}
+// readFileLines reads lines of the file of the diff's new side within the
+// specified range (1-indexed, inclusive)
+func readFileLines(diffText, filePath, repoRoot string, startLine, endLine int) []string {
+	content, ok := newSideContent(diffText, filePath, repoRoot)
+	if !ok {
+		return []string{"Error reading file: " + filePath}
 	}
 
-	lines := strings.Split(string(content), "\n")
+	lines := strings.Split(content, "\n")
 
 	// Convert to 0-indexed
 	start := startLine - 1

@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -149,7 +147,7 @@ func newDiffTokenSource(diffText, filePath, repoRoot string, oldLineMap, newLine
 
 	s.fallbackLines, _ = extractDiffCodeLines(diffText)
 
-	newLines := readFileAllLines(filePath, repoRoot)
+	newLines := readFileAllLines(diffText, filePath, repoRoot)
 	if newLines != nil {
 		s.newFile = newFileTokens(filePath, newLines)
 		s.newFile.tokenizeShownLines(newLineMap)
@@ -249,17 +247,14 @@ func extractDiffCodeLines(diff string) ([]string, []byte) {
 	return codeLines, lineTypes
 }
 
-// readFileAllLines reads the whole file split into lines, or nil if it
-// cannot be read.
-func readFileAllLines(filePath, repoRoot string) []string {
-	if filePath == "" || repoRoot == "" {
+// readFileAllLines reads the whole file of the diff's new side split into
+// lines, or nil if it cannot be read.
+func readFileAllLines(diffText, filePath, repoRoot string) []string {
+	content, ok := newSideContent(diffText, filePath, repoRoot)
+	if !ok {
 		return nil
 	}
-	content, err := os.ReadFile(filepath.Join(repoRoot, filePath))
-	if err != nil {
-		return nil
-	}
-	return strings.Split(string(content), "\n")
+	return strings.Split(content, "\n")
 }
 
 // reconstructOldFileLines rebuilds the old version of the file from the new

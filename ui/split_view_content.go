@@ -222,7 +222,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 	foldBeforeLine := make(map[int]*FoldableRange) // diffLines index -> fold shown before it
 	foldOldOffset := make(map[string]int)          // fold ID -> old line number minus new line number
 	if len(hunks) > 0 {
-		foldableRanges := detectFoldableRanges(diffText, 3, getFileTotalLines(filePath, repoRoot))
+		foldableRanges := detectFoldableRanges(diffText, 3, getFileTotalLines(diffText, filePath, repoRoot))
 		last := hunks[len(hunks)-1]
 		for i := range foldableRanges {
 			fold := &foldableRanges[i]
@@ -251,7 +251,7 @@ func generateSplitViewContent(diffText string, oldLineMap, newLineMap map[int]in
 	appendFold := func(fold *FoldableRange) {
 		if fold.Fixed || (foldState != nil && foldState.IsExpanded(fold.ID)) {
 			offset := foldOldOffset[fold.ID]
-			expandedLines := readFileLines(filePath, repoRoot, fold.StartLine, fold.EndLine)
+			expandedLines := readFileLines(diffText, filePath, repoRoot, fold.StartLine, fold.EndLine)
 			for lineIdx, expandedLine := range expandedLines {
 				newNum := fold.StartLine + lineIdx
 				var line string
