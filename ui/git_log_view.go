@@ -308,7 +308,7 @@ func (glv *GitLogView) showCommitDetails() {
 
 	commitHash := entry.Hash
 	glv.loadCommitFiles(commitHash)
-	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", "", false, glv.commitFiles, func(opts []string, paths ...string) []string {
+	showReadOnlyDiff(glv.app, glv.flex, glv.repoRoot, "Changed Files", "", "commit "+commitHash, false, glv.commitFiles, func(opts []string, paths ...string) []string {
 		args := append([]string{"show", "--format="}, opts...)
 		args = append(args, commitHash, "--")
 		return append(args, paths...)
@@ -328,7 +328,7 @@ func (glv *GitLogView) showCommitDetails() {
 // With workTree, the after side of the diff is the working tree, as in the
 // pull request diff of the branch checked out, so 'f' shows the whole file
 // there and 'go' jumps to a definition.
-func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, workTree bool, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
+func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string, title string, mode string, commentView string, workTree bool, files []FileEntry, diffArgs func(opts []string, paths ...string) []string, reload func() ([]FileEntry, error), onEsc func()) {
 	// Create UI components (same pattern as root_editor.go)
 	fileListView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -996,6 +996,8 @@ func showReadOnlyDiff(app *tview.Application, host *tview.Flex, repoRoot string,
 	diffViewContext.filterFiles = func() {
 		startFilterInput(fileListKeyContext, filterInputFileName)
 	}
+	diffViewContext.commentView = func() string { return commentView }
+	fileListKeyContext.showComments = func() { showComments(diffViewContext) }
 
 	// Switch display
 	host.Clear()

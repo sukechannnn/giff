@@ -76,6 +76,7 @@ $ giff -v         # show version
 | `pr` | PR diff — the branch's changes as GitHub shows them, even after they are committed and pushed |
 | `b` | Switch branches — the local branches and those of the open pull requests, with their titles (the bases of the current branch's pull request first; a pull request's branch is checked out up to date with `gh pr checkout`). In the file browser (`f`), `b` shows or hides the blame instead: the commit that last changed each line on its left, and the one of the cursor's line in the status bar |
 | `f` | File browser — the files tracked in the repository, opened at the file under the cursor (`f` again returns to the diffs) |
+| `I` | The comments left with `i` in the diff view and their answers |
 | `t` | Open a terminal pane — run a command, `Tab` scrolls its output |
 | `Enter` | Switch to diff view |
 | `q` | Quit |
@@ -96,6 +97,9 @@ $ giff -v         # show version
 | `l` / `h` (on a word) | Stretch the word under the `]` cursor over the next / previous word, with what lies between, e.g. `scheduled` → `scheduled-ecs` → `scheduled-ecs-task` (outside a word, they scroll sideways) |
 | `go` | Jump to the definition of the word under the `]` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; on the `source` of a Terraform module, the module's files; see [the details](./docs/definition-jump.md)) |
 | `Ctrl+O` | Back to where `go` was pressed |
+| `i` | Leave a question or a request on the line under the cursor, or the lines selected with `V`, for Claude Code to answer (see [Asking Claude Code](#asking-claude-code)) |
+| `I` | The comments left with `i` and their answers |
+| `D` | Delete the comment on the line under the cursor |
 | `e` | Toggle fold |
 | `s` | Split view |
 | `w` | Hide whitespace |
@@ -111,6 +115,31 @@ $ giff -v         # show version
 | `q` | Quit |
 
 The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the keys above work there too, except staging, discarding, undo, opening the Git log or the PR diff, and switching branches (`b`). Showing the whole file (`f`) and jumping to a definition (`go`) work in the PR diff, whose files are those of the branch checked out, but not in the Git log. In the PR diff, `r` reloads it after new commits.
+
+## Asking Claude Code
+
+`i` in the diff view (or the file view) opens a text area right under the line under the cursor, or the lines selected with `V`, as GitHub does for a review comment, to leave a question or a request on them. `Option+Enter` saves it as a comment, with the file, its lines and their code. A Claude Code session started in the same repository picks the comments up and answers them, and giff tells when an answer arrives.
+
+A line with comments has a mark on its line number, yellow while they wait for an answer and green once answered. With the cursor on it, the comments and their answers show under it, and `i` there replies to the answer: Claude Code answers the reply with the whole exchange in mind. `D` on it deletes the comment. `I` lists all the comments with their answers (`Enter` shows a comment's lines, `D` deletes it).
+
+Install the `giff` skill for Claude Code once:
+
+```console
+$ giff comment install-skill
+```
+
+Then run `/giff` in Claude Code, in the repository you review with giff. It waits for comments, answers each one (making the change when the comment asks for one) and writes the answer back.
+
+The comments are kept in `~/.giff/comments`, one file per repository (and per worktree): a Claude Code session only ever sees the comments of the repository it works in. `giff comment` reads and writes them from the command line:
+
+```console
+$ giff comment list [--all]       # the comments not answered yet (--all: and the answered ones)
+$ giff comment next [--wait 10]   # pick up the next comment, as JSON (what the skill runs)
+$ giff comment answer <id>        # answer a comment, the text read from stdin
+$ giff comment reply <id>         # reply to the answer, the text read from stdin
+$ giff comment rm <id>            # delete a comment
+$ giff comment clear [--all]      # delete the answered comments (--all: every comment)
+```
 
 ## License
 

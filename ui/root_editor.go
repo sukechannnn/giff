@@ -20,8 +20,8 @@ var preferUnstagedSection bool = false
 
 // globalStatusView defined globally
 var globalStatusView *tview.TextView
-var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  b:branch  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
-var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  ]/[:word  go:definition  C-o:back  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  b:branch  C-f:filter  C-e/C-y:scroll  Esc:back  q:quit"
+var fileListKeyMessage = "a:stage  A:stage file  d:discard  C-a:stage all  u:undo  C-r:redo  C-k:commit  C-j:amend  Tab:file  gg/G:top/end  H/L:dir  s:split  w:ws  /:grep  !:hide  C-f:filter  v:editor  c:code  C-l:log  pr:PR diff  b:branch  I:comments  t:terminal  Y:copy  C-e/C-y:scroll  Enter:switch  q:quit"
+var diffViewKeyMessage = "a:stage lines  d:discard lines  A:stage file  u:undo  C-r:redo  V:select  g/G:top/end  /:search  ]/[:word  go:definition  C-o:back  i:ask Claude  I:comments  e:fold  s:split  w:ws  y:yank  Y:copy path  f:whole file  pr:PR diff  b:branch  C-f:filter  C-e/C-y:scroll  Esc:back  q:quit"
 
 // restoreStatusFunc is called to restore the default status message (set by SetupRootEditor)
 var restoreStatusFunc func()
@@ -911,7 +911,7 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 
 				focusBefore := app.GetFocus()
 				prView := tview.NewFlex()
-				showReadOnlyDiff(app, prView, repoRoot, "PR: "+base+"...HEAD", "PR", true, files, func(opts []string, paths ...string) []string {
+				showReadOnlyDiff(app, prView, repoRoot, "PR: "+base+"...HEAD", "PR", "PR diff "+base+"...HEAD", true, files, func(opts []string, paths ...string) []string {
 					extra := append(append([]string{}, opts...), "--")
 					return git.PRDiffArgs(base, append(extra, paths...)...)
 				}, func() ([]FileEntry, error) {
@@ -1427,6 +1427,15 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 		diffViewContext.viewUpdater.UpdateWithCursor(currentDiffText, cursorY)
 	}
 
+	// The comments left with 'i' say what they were left on
+	diffViewContext.commentView = func() string {
+		if currentStatus == "" {
+			return "diff"
+		}
+		return currentStatus + " diff"
+	}
+	fileListKeyContext.showComments = func() { showComments(diffViewContext) }
+
 	// 'go' shows a definition, remembering where it was pressed
 	diffViewContext.jumpTo = func(loc git.Location) {
 		var from jumpPoint
@@ -1494,6 +1503,47 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	// 'b' in the file browser shows or hides the blame, and switches
 	// branches elsewhere
 	blameLoaded = redrawBrowserFile
+
+	// redrawCurrentDiff draws the file shown again as it is, keeping the
+	// cursor, the scroll, the grep and the focus, for its comments changed
+	redrawCurrentDiff := func() {
+		if currentFile == "" || currentDiffText == "" {
+			return
+		}
+		if isFileBrowserMode {
+			redrawBrowserFile(currentDiffText)
+			return
+		}
+		views := []*tview.TextView{diffView}
+		if isSplitView {
+			views = []*tview.TextView{beforeView, afterView}
+		}
+		type offset struct{ row, col int }
+		offsets := make([]offset, len(views))
+		for i, v := range views {
+			offsets[i].row, offsets[i].col = v.GetScrollOffset()
+		}
+		switch {
+		case !leftPaneFocused:
+			diffViewContext.viewUpdater.UpdateWithSelection(currentDiffText, cursorY, selectStart, selectEnd, isSelecting)
+		case isSplitView && diffGrepQuery != "":
+			updateSplitViewHighlighted(beforeView, afterView, currentDiffText, cursorY, foldState, currentFile, repoRoot, searchQuery)
+		case isSplitView:
+			updateSplitViewWithoutCursor(beforeView, afterView, currentDiffText, foldState, currentFile, repoRoot)
+		case diffGrepQuery != "":
+			updateDiffViewHighlighted(diffView, currentDiffText, cursorY, foldState, currentFile, repoRoot, searchQuery)
+		default:
+			updateDiffViewWithoutCursor(diffView, currentDiffText, foldState, currentFile, repoRoot)
+		}
+		if leftPaneFocused {
+			for i, v := range views {
+				v.ScrollTo(offsets[i].row, offsets[i].col)
+			}
+		}
+	}
+	if repoRoot != "" {
+		go watchCommentAnswers(app, repoRoot, func(message string) { updateGlobalStatus(message, "forestgreen") }, redrawCurrentDiff)
+	}
 	toggleBlame := func() {
 		if browserRoot != repoRoot {
 			updateGlobalStatus("Blame is not available for a file outside the repository", "tomato")

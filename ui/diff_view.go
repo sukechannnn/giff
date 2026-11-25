@@ -112,6 +112,13 @@ type DiffViewContext struct {
 	// Both are nil where there is no file view.
 	jumpTo   func(loc git.Location)
 	jumpBack func() bool // false when there is nowhere to go back to
+
+	// commentView, if non-nil, names what the pane shows, for the comments left
+	// with 'i': "unstaged diff", "PR diff"...
+	commentView func() string
+	// commentEditing is the comment being written under its lines, nil when
+	// none is
+	commentEditing *commentEditing
 }
 
 // applyUndoRedoInDiffView runs the given undo/redo action and refreshes both
@@ -272,6 +279,7 @@ func scrollDiffView(ctx *DiffViewContext, direction int) {
 
 // SetupDiffViewKeyBindings sets up key bindings for diff view
 func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
+	registerCommentViews(ctx)
 	// Set viewUpdater in initial state
 	if ctx.viewUpdater == nil {
 		if *ctx.isSplitView {
@@ -697,6 +705,23 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 					} else {
 						ctx.updateGlobalStatus("Failed to copy path to clipboard", "tomato")
 					}
+				}
+				return nil
+			case 'i':
+				// A question or a request on the lines, for Claude Code
+				if ctx.mainView != nil {
+					addComment(ctx)
+				}
+				return nil
+			case 'I':
+				if ctx.mainView != nil {
+					showComments(ctx)
+				}
+				return nil
+			case 'D':
+				// Shift+D: delete the comment on the cursor's line
+				if ctx.mainView != nil {
+					deleteCommentAtCursor(ctx)
 				}
 				return nil
 			case 'L':

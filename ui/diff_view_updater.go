@@ -173,6 +173,8 @@ func updateDiffViewWithSelection(diffView *tview.TextView, diffText string, curs
 }
 
 func renderUnifiedView(diffView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, foldState *FoldState, filePath, repoRoot string, searchQuery string) {
+	// The comments show on the pane once it is drawn
+	defer decorateComments(diffView, cursorY)
 	diffView.Clear()
 
 	content := getCachedUnifiedContent(diffText, foldState, filePath, repoRoot)
@@ -289,6 +291,8 @@ func updateSplitViewWithCursor(beforeView, afterView *tview.TextView, diffText s
 }
 
 func renderSplitView(beforeView, afterView *tview.TextView, diffText string, cursorY int, selectStart int, selectEnd int, isSelecting bool, foldState *FoldState, filePath, repoRoot string, searchQuery string) {
+	// The comments show on the pane once it is drawn
+	defer decorateComments(afterView, cursorY)
 	beforeView.Clear()
 	afterView.Clear()
 
@@ -497,6 +501,8 @@ func renderFileView(diffView *tview.TextView, content string, cursorY int, selec
 // renderFileViewWithGutter renders the file like renderFileView, with
 // gutter[i], when gutter is non-nil, to the left of line i: the blame
 func renderFileViewWithGutter(diffView *tview.TextView, content string, cursorY int, selectStart int, selectEnd int, isSelecting bool, filePath string, searchQuery string, gutter []string) {
+	// The comments show on the pane once it is drawn
+	defer decorateComments(diffView, cursorY)
 	diffView.Clear()
 
 	if content == "" {

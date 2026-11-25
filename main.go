@@ -13,6 +13,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/sukechannnn/giff/comments"
 	"github.com/sukechannnn/giff/config"
 	"github.com/sukechannnn/giff/git"
 	"github.com/sukechannnn/giff/ui"
@@ -28,6 +29,12 @@ type Application struct {
 }
 
 func main() {
+	// `giff comment ...` is the command line of the comments left with 'i', for
+	// Claude Code to read and answer
+	if len(os.Args) > 1 && os.Args[1] == "comment" {
+		os.Exit(comments.Run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+
 	var autoRefresh bool
 	var showVersion bool
 	flag.BoolVar(&autoRefresh, "watch", false, "Watch for file changes and auto-refresh")

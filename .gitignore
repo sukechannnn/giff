@@ -19,7 +19,6 @@ go.work
 go.work.sum
 
 # Build output
-giff
 /giff
 gitta
 dist/
