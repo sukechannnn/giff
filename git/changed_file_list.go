@@ -96,15 +96,23 @@ func GetChangedFiles(repoPath string) ([]FileInfo, []FileInfo, []FileInfo, error
 		worktreeStatus := line[1]
 		filename := strings.TrimSpace(line[2:]) // Filename starts after the 2nd character
 
-		// Handle rename case (R  old -> new)
-		if indexStatus == 'R' {
+		// Handle rename and copy cases (R  old -> new)
+		if (indexStatus == 'R' || indexStatus == 'C') && strings.Contains(filename, " -> ") {
 			// Split by " -> " to get old and new filenames
-			parts := strings.Split(filename, " -> ")
+			parts := strings.SplitN(filename, " -> ", 2)
 			oldFile := parts[0]
 			newFile := parts[1]
 			// Treat old file as deleted, new file as added
-			stagedFiles = append(stagedFiles, FileInfo{Path: oldFile, ChangeStatus: "deleted"})
+			if indexStatus == 'R' {
+				stagedFiles = append(stagedFiles, FileInfo{Path: oldFile, ChangeStatus: "deleted"})
+			}
 			stagedFiles = append(stagedFiles, FileInfo{Path: newFile, ChangeStatus: "added"})
+			// The new file can have changes of its own not staged yet (RM)
+			if worktreeStatus == 'D' {
+				modifiedFiles = append(modifiedFiles, FileInfo{Path: newFile, ChangeStatus: "deleted"})
+			} else if worktreeStatus != ' ' {
+				modifiedFiles = append(modifiedFiles, FileInfo{Path: newFile, ChangeStatus: "modified"})
+			}
 		} else if worktreeStatus == 'R' {
 			// Unstaged rename
 			parts := strings.Split(filename, " -> ")
