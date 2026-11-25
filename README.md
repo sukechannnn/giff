@@ -91,15 +91,15 @@ $ giff -v         # show version
 | `d` | Discard selected lines (unstaged changes only, cannot be undone) |
 | `A` | Stage/unstage file |
 | `/` | Search |
-| `n` / `N` | Next / prev match (steps into the next file while a `/` grep is active) |
-| `n` / `N` (no search) | Move a cursor word by word, on to the next / prev line at the end, highlighting every occurrence of the word; `Enter` jumps to the next one, `Esc` drops it |
-| `l` / `h` (on a word) | Stretch the word under the `n` cursor over the next / previous word, with what lies between, e.g. `scheduled` → `scheduled-ecs` → `scheduled-ecs-task` (outside a word, they scroll sideways) |
-| `go` | Jump to the definition of the word under the `n` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; on the `source` of a Terraform module, the module's files; see [the details](./docs/definition-jump.md)) |
+| `n` / `N` | Next / prev match of the search, or of the word under the `]` cursor (steps into the next file while a `/` grep is active) |
+| `]` / `[` | Move a cursor word by word, on to the next / prev line at the end, highlighting every occurrence of the word, which `n` / `N` walk; `Esc` drops it |
+| `l` / `h` (on a word) | Stretch the word under the `]` cursor over the next / previous word, with what lies between, e.g. `scheduled` → `scheduled-ecs` → `scheduled-ecs-task` (outside a word, they scroll sideways) |
+| `go` | Jump to the definition of the word under the `]` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; on the `source` of a Terraform module, the module's files; see [the details](./docs/definition-jump.md)) |
 | `Ctrl+O` | Back to where `go` was pressed |
 | `e` | Toggle fold |
 | `s` | Split view |
 | `w` | Hide whitespace |
-| `y` | Yank lines, without the indentation they share (the word while `n` / `N` is on one) |
+| `y` | Yank lines, without the indentation they share (the word while `]` / `[` is on one) |
 | `Y` | Copy file path |
 | `f` | Show the whole file at the cursor (`f` again returns to the diff) |
 | `Ctrl+L` | Copy `path:line` |

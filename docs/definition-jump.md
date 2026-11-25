@@ -2,7 +2,7 @@
 
 [日本語](./definition-jump.ja.md)
 
-Put the word cursor on a name with `n` / `N`, then press `go`. giff shows where
+Put the word cursor on a name with `]` / `[`, then press `go`. giff shows where
 the name is defined in the file view, and `Ctrl+O` goes back to where `go` was
 pressed. When there are several definitions, a list with a preview of their
 code comes up to pick one from (`j` / `k` to select, `Enter` to open, `Esc` to

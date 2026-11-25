@@ -116,14 +116,20 @@ func TestWordCursorSearchesItsWord(t *testing.T) {
 		t.Errorf("searchMatchIndex = %d, want 0 (the word's own row)", *ctx.searchMatchIndex)
 	}
 
-	// Enter jumps to the next match, and n goes on from the word found there.
-	nextWordMatch(ctx)
+	// n jumps to the next match, N back to the previous one, and ] goes on
+	// from the word found there.
+	nextWordMatch(ctx, 1)
 	if *ctx.cursorY != 2 || *ctx.searchMatchIndex != 1 || !wordCursorActive(ctx) {
-		t.Fatalf("Enter = row %d, match %d, active %v; want row 2, match 1, active", *ctx.cursorY, *ctx.searchMatchIndex, wordCursorActive(ctx))
+		t.Fatalf("n = row %d, match %d, active %v; want row 2, match 1, active", *ctx.cursorY, *ctx.searchMatchIndex, wordCursorActive(ctx))
 	}
+	nextWordMatch(ctx, -1)
+	if *ctx.cursorY != 0 || *ctx.searchMatchIndex != 0 || ctx.word.text != "bar" {
+		t.Fatalf("N = row %d, match %d, word %q; want row 0, match 0, \"bar\"", *ctx.cursorY, *ctx.searchMatchIndex, ctx.word.text)
+	}
+	nextWordMatch(ctx, 1)
 	moveWordCursor(ctx, 1)
 	if *ctx.cursorY != 2 || ctx.word.text != "y" {
-		t.Errorf("n after Enter = row %d %q, want row 2 \"y\" (the word after \"Bar\")", *ctx.cursorY, ctx.word.text)
+		t.Errorf("] after n = row %d %q, want row 2 \"y\" (the word after \"Bar\")", *ctx.cursorY, ctx.word.text)
 	}
 
 	// Esc drops the search along with the word cursor.
@@ -163,14 +169,14 @@ func TestScrollKeepsWordCursor(t *testing.T) {
 	ctx = scrolled()
 	moveWordCursor(ctx, 1)
 	if *ctx.cursorY != 1 || ctx.word.text != "bar" {
-		t.Errorf("n after Ctrl+E = row %d %q, want row 1 \"bar\"", *ctx.cursorY, ctx.word.text)
+		t.Errorf("] after Ctrl+E = row %d %q, want row 1 \"bar\"", *ctx.cursorY, ctx.word.text)
 	}
 
 	// Enter finds the word in the new row before going any further.
 	ctx = scrolled()
-	nextWordMatch(ctx)
+	nextWordMatch(ctx, 1)
 	if *ctx.cursorY != 1 || ctx.word.start != 5 {
-		t.Errorf("Enter after Ctrl+E = row %d at %d, want row 1 at 5 (its \"foo\")", *ctx.cursorY, ctx.word.start)
+		t.Errorf("n after Ctrl+E = row %d at %d, want row 1 at 5 (its \"foo\")", *ctx.cursorY, ctx.word.start)
 	}
 }
 

@@ -363,9 +363,10 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			}
 			// Scrolling keeps it too, so the search can be looked over, and so
 			// does the g of go
-			wordKey := event.Key() == tcell.KeyEnter || event.Key() == tcell.KeyEsc ||
+			wordKey := event.Key() == tcell.KeyEsc ||
 				event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyCtrlY ||
-				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N' || (event.Rune() == 'g' && !gPending)))
+				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N' ||
+					event.Rune() == ']' || event.Rune() == '[' || (event.Rune() == 'g' && !gPending)))
 			if !wordKey {
 				clearWordCursor(ctx)
 			}
@@ -401,10 +402,6 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			focusFileList(ctx)
 			return nil
 		case tcell.KeyEnter:
-			if wordCursorActive(ctx) {
-				nextWordMatch(ctx)
-				return nil
-			}
 			// Return to left pane
 			*ctx.isSelecting = false
 			*ctx.selectStart = -1
@@ -757,20 +754,33 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				*ctx.searchCursorYBeforeSearch = *ctx.cursorY
 				ctx.setGlobalStatusText("[white]/[-]")
 				return nil
-			case 'n':
-				// Move to next match, or without a search to the next word
-				if *ctx.searchQuery != "" && !wordCursorActive(ctx) {
+			case 'n', 'N':
+				// The next / previous match of the search, or of the word the
+				// word cursor is on
+				direction := 1
+				if event.Rune() == 'N' {
+					direction = -1
+				}
+				switch {
+				case wordCursorActive(ctx):
+					nextWordMatch(ctx, direction)
+				case *ctx.searchQuery != "" && direction > 0:
 					moveToNextMatch(ctx)
-				} else if !*ctx.isSelecting {
-					moveWordCursor(ctx, 1)
+				case *ctx.searchQuery != "":
+					moveToPrevMatch(ctx)
+				default:
+					ctx.updateGlobalStatus("Nothing to look for: / searches, ] / [ pick a word", "tomato")
 				}
 				return nil
-			case 'N':
-				// Move to previous match, or without a search to the previous word
-				if *ctx.searchQuery != "" && !wordCursorActive(ctx) {
-					moveToPrevMatch(ctx)
-				} else if !*ctx.isSelecting {
-					moveWordCursor(ctx, -1)
+			case ']', '[':
+				// The word cursor: the next / previous word, on to the next /
+				// previous line at the end
+				if !*ctx.isSelecting {
+					direction := 1
+					if event.Rune() == '[' {
+						direction = -1
+					}
+					moveWordCursor(ctx, direction)
 				}
 				return nil
 			case 'u':

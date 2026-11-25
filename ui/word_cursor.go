@@ -233,12 +233,17 @@ func selectWord(ctx *DiffViewContext, row int, word wordSpan) {
 }
 
 // nextWordMatch moves to the next row the word cursor's word is found in,
-// and puts the word cursor on its first occurrence there
-func nextWordMatch(ctx *DiffViewContext) {
+// or with direction < 0 the previous one, and puts the word cursor on its
+// first occurrence there
+func nextWordMatch(ctx *DiffViewContext, direction int) {
 	if len(*ctx.searchMatches) == 0 {
 		return
 	}
-	moveToNextMatch(ctx)
+	if direction < 0 {
+		moveToPrevMatch(ctx)
+	} else {
+		moveToNextMatch(ctx)
+	}
 
 	row := *ctx.cursorY
 	// In case the match is in the line number, start before the first word
@@ -316,6 +321,6 @@ func showWordCursorStatus(ctx *DiffViewContext) {
 	if ctx.setGlobalStatusText == nil {
 		return
 	}
-	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  Enter:next match  n/N:next/prev word  l/h:extend right/left  go:definition  y:yank  Esc:cancel",
+	ctx.setGlobalStatusText(fmt.Sprintf("[white]/%s [%d/%d][-]  n/N:next/prev match  ]/[:next/prev word  l/h:extend right/left  go:definition  y:yank  Esc:cancel",
 		tview.Escape(ctx.word.text), *ctx.searchMatchIndex+1, len(*ctx.searchMatches)))
 }

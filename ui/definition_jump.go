@@ -38,7 +38,7 @@ func jumpToDefinition(ctx *DiffViewContext) {
 		}
 	}
 	if !wordCursorActive(ctx) {
-		ctx.updateGlobalStatus("Put the cursor on a word with n first, then go", "tomato")
+		ctx.updateGlobalStatus("Put the cursor on a word with ] first, then go", "tomato")
 		return
 	}
 	if !git.SupportsDefinitions(*ctx.currentFile) {
@@ -165,7 +165,7 @@ func showDefinition(ctx *DiffViewContext, d git.Location, word string) {
 	}
 	selectWord(ctx, row, span)
 	if ctx.setGlobalStatusText != nil {
-		ctx.setGlobalStatusText(fmt.Sprintf("[white]%s:%d[-]  C-o:back  go:definition  Enter:next match  Esc:cancel",
+		ctx.setGlobalStatusText(fmt.Sprintf("[white]%s:%d[-]  C-o:back  go:definition  n/N:next/prev match  Esc:cancel",
 			tview.Escape(d.Path), d.Line))
 	}
 }
