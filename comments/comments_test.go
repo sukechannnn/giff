@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newRepo makes an empty Git repository and keeps the comments of the test in a
@@ -180,5 +181,23 @@ func TestCLI(t *testing.T) {
 	}
 	if code, _ := run("", "bogus"); code != 2 {
 		t.Errorf("unknown command = %d, want 2", code)
+	}
+}
+
+func TestNextForeverWaitsForAComment(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("GIFF_COMMENTS_DIR", filepath.Join(t.TempDir(), "comments"))
+
+	go func() {
+		// Well past a poll, so next has found nothing at least once
+		time.Sleep(pollInterval + 200*time.Millisecond)
+		Add(repo, Comment{Path: "a.txt", StartLine: 1, EndLine: 1, Question: "late?"})
+	}()
+	var stdout, stderr bytes.Buffer
+	if code := next(repo, waitForever, &stdout, &stderr); code != 0 {
+		t.Fatalf("next() = %d, stderr %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "late?") || strings.Contains(stderr.String(), "timeout") {
+		t.Errorf("next() printed %q, stderr %q; want the comment and no timeout", stdout.String(), stderr.String())
 	}
 }

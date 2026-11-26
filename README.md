@@ -134,7 +134,8 @@ The comments are kept in `~/.giff/comments`, one file per repository (and per wo
 
 ```console
 $ giff comment list [--all]       # the comments not answered yet (--all: and the answered ones)
-$ giff comment next [--wait 10]   # pick up the next comment, as JSON (what the skill runs)
+$ giff comment next [--wait 10]   # pick up the next comment, as JSON, waiting 10 minutes for one
+$ giff comment next --forever     # the same, waiting until there is one (what the skill runs)
 $ giff comment answer <id>        # answer a comment, the text read from stdin
 $ giff comment reply <id>         # reply to the answer, the text read from stdin
 $ giff comment rm <id>            # delete a comment

@@ -23,7 +23,9 @@ The comments left with 'i' in giff, of the Git repository of the current directo
 
 commands:
   list [--json] [--all]     the comments not answered yet (--all: and those answered)
-  next [--wait MINUTES]     pick up the next comment to answer, as JSON
+  next [--wait MINUTES | --forever]
+                            pick up the next comment to answer, as JSON, waiting
+                            for one MINUTES minutes or until there is one
   answer <id> [text]        answer the comment (the text is read from stdin when not given)
   reply <id> [text]         reply to the answer, for Claude Code to answer again (stdin too)
   rm <id>                   delete the comment
@@ -69,8 +71,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return list(repoRoot, *asJSON, *all, stdout, stderr)
 	case "next":
 		wait := fs.Int("wait", 0, "minutes to wait for a comment when there is none")
+		forever := fs.Bool("forever", false, "wait for a comment until there is one")
 		if fs.Parse(rest) != nil {
 			return 2
+		}
+		if *forever {
+			return next(repoRoot, waitForever, stdout, stderr)
 		}
 		return next(repoRoot, time.Duration(*wait)*time.Minute, stdout, stderr)
 	case "answer", "reply":
@@ -173,6 +179,10 @@ func list(repoRoot string, asJSON, all bool, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// waitForever, as the time next waits, is until there is a comment
+const waitForever time.Duration = -1
+
+// next prints the next comment to answer, waiting up to wait for one
 func next(repoRoot string, wait time.Duration, stdout, stderr io.Writer) int {
 	deadline := time.Now().Add(wait)
 	waiting := false
@@ -187,7 +197,7 @@ func next(repoRoot string, wait time.Duration, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, string(data))
 			return 0
 		}
-		if !time.Now().Before(deadline) {
+		if wait != waitForever && !time.Now().Before(deadline) {
 			if wait > 0 {
 				fmt.Fprintln(stderr, "Timed out waiting for comments")
 			} else {
@@ -196,7 +206,11 @@ func next(repoRoot string, wait time.Duration, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if !waiting {
-			fmt.Fprintf(stderr, "Waiting for comments... (timeout: %s)\n", wait)
+			if wait == waitForever {
+				fmt.Fprintln(stderr, "Waiting for comments...")
+			} else {
+				fmt.Fprintf(stderr, "Waiting for comments... (timeout: %s)\n", wait)
+			}
 			waiting = true
 		}
 		time.Sleep(pollInterval)

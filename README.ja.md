@@ -131,7 +131,8 @@ $ giff comment install-skill
 
 ```console
 $ giff comment list [--all]       # まだ答えのないコメント（--all: 答えたものも）
-$ giff comment next [--wait 10]   # 次のコメントを JSON で取り出す（スキルが使う）
+$ giff comment next [--wait 10]   # 次のコメントを JSON で取り出す（なければ10分待つ）
+$ giff comment next --forever     # 同じく、届くまで待ち続ける（スキルが使う）
 $ giff comment answer <id>        # コメントに答える（答えは標準入力から）
 $ giff comment reply <id>         # 答えに返信する（標準入力から）
 $ giff comment rm <id>            # コメントを削除
