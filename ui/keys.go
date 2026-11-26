@@ -19,3 +19,18 @@ func isAltEnter(event *tcell.EventKey) bool {
 	// A terminal that sends Esc and Enter for it: read as Alt+Ctrl+M
 	return event.Key() == tcell.KeyRune && event.Rune() == 'm' && event.Modifiers() == tcell.ModAlt|tcell.ModCtrl
 }
+
+// isNewlineKey reports whether event asks for a new line in a text area
+// that Enter sends: Shift+Enter, where the terminal tells it from Enter, or
+// Option+Enter anywhere
+func isNewlineKey(event *tcell.EventKey) bool {
+	if event.Key() == tcell.KeyEnter && event.Modifiers()&tcell.ModShift != 0 {
+		return true
+	}
+	// A terminal set up to send a line feed for Shift+Enter, as Claude
+	// Code's terminal setup does in iTerm2: the same as Ctrl+J
+	if event.Key() == tcell.KeyCtrlJ {
+		return true
+	}
+	return isAltEnter(event)
+}

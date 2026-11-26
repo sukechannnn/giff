@@ -64,7 +64,7 @@ func findComment(repoRoot, id string) (comments.Comment, bool) {
 }
 
 // showCommentChat opens the exchange of the comment id as a chat, with a text
-// area under it to go on with it: Option+Enter sends what is written as the
+// area under it to go on with it: Enter sends what is written as the
 // next question, once Claude Code has answered the last one. The answers come
 // in as Claude Code writes them.
 func showCommentChat(ctx *DiffViewContext, id string) {
@@ -103,7 +103,7 @@ func showCommentChat(ctx *DiffViewContext, id string) {
 		}
 		if c.Status == comments.StatusAnswered {
 			input.SetPlaceholder("Go on with Claude Code about these lines")
-			input.SetTitle(" Reply  (Option+Enter:send) ")
+			input.SetTitle(" Reply  (Enter:send  Shift+Enter:newline) ")
 		} else {
 			input.SetPlaceholder("Claude Code has not answered yet")
 			input.SetTitle(" Reply  (after the answer) ")
@@ -129,7 +129,10 @@ func showCommentChat(ctx *DiffViewContext, id string) {
 		case event.Key() == tcell.KeyTab:
 			ctx.app.SetFocus(history)
 			return nil
-		case isAltEnter(event):
+		case isNewlineKey(event):
+			// Shift+Enter (or Option+Enter) for a new line; Enter alone sends
+			return tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone)
+		case event.Key() == tcell.KeyEnter:
 			text := strings.TrimSpace(input.GetText())
 			if text == "" {
 				return nil

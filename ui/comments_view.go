@@ -127,7 +127,7 @@ func addComment(ctx *DiffViewContext) {
 	if *ctx.isSelecting && *ctx.selectStart >= 0 && *ctx.selectEnd >= 0 {
 		row = max(*ctx.selectStart, *ctx.selectEnd)
 	}
-	title := fmt.Sprintf(" Comment on %s  (Option+Enter:save  Esc:cancel) ", tview.Escape(target.Location()))
+	title := fmt.Sprintf(" Comment on %s  (Enter:save  Shift+Enter:newline  Esc:cancel) ", tview.Escape(target.Location()))
 	showCommentInput(ctx, title, row, func(question string) {
 		target.Question = question
 		saved, err := comments.Add(ctx.repoRoot, target)
@@ -203,7 +203,7 @@ func redrawDiffPane(ctx *DiffViewContext) {
 
 // showCommentInput opens a text area under row of the diff pane, as GitHub
 // does under the lines of a review comment, and calls save with its text on
-// Option+Enter
+// Enter
 func showCommentInput(ctx *DiffViewContext, title string, row int, save func(string)) {
 	focus := ctx.app.GetFocus()
 	background := util.ModalBackgroundColor.ToTcellColor()
@@ -230,7 +230,10 @@ func showCommentInput(ctx *DiffViewContext, title string, row int, save func(str
 			closeInput()
 			redrawDiffPane(ctx)
 			return nil
-		case isAltEnter(event):
+		case isNewlineKey(event):
+			// Shift+Enter (or Option+Enter) for a new line; Enter alone sends
+			return tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone)
+		case event.Key() == tcell.KeyEnter:
 			text := strings.TrimSpace(input.GetText())
 			if text == "" {
 				ctx.updateGlobalStatus("The comment is empty", "tomato")
