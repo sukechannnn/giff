@@ -113,12 +113,10 @@ func commentCode(ctx *DiffViewContext, start, end int) string {
 // selected, for a question or a request on them, and keeps it for Claude
 // Code to answer with `giff comment`
 func addComment(ctx *DiffViewContext) {
-	// On a line with comments, the text replies to the last of them
-	if !*ctx.isSelecting {
-		if cs := commentRows(ctx)[*ctx.cursorY]; len(cs) > 0 {
-			replyToComment(ctx, cs[len(cs)-1])
-			return
-		}
+	// On a line with a comment, i opens it under the line, or closes it
+	if !*ctx.isSelecting && len(commentRows(ctx)[*ctx.cursorY]) > 0 {
+		toggleCommentAtCursor(ctx)
+		return
 	}
 	target, ok := commentTarget(ctx)
 	if !ok {
@@ -130,7 +128,7 @@ func addComment(ctx *DiffViewContext) {
 		row = max(*ctx.selectStart, *ctx.selectEnd)
 	}
 	title := fmt.Sprintf(" Comment on %s  (Option+Enter:save  Esc:cancel) ", tview.Escape(target.Location()))
-	showCommentInput(ctx, title, row, false, func(question string) {
+	showCommentInput(ctx, title, row, func(question string) {
 		target.Question = question
 		saved, err := comments.Add(ctx.repoRoot, target)
 		if err != nil {
@@ -139,6 +137,15 @@ func addComment(ctx *DiffViewContext) {
 		}
 		*ctx.isSelecting = false
 		*ctx.selectStart, *ctx.selectEnd = -1, -1
+		// The comment stays open under its lines, as it was written there
+		for r, cs := range commentRows(ctx) {
+			for _, c := range cs {
+				if c.ID == saved.ID {
+					*ctx.cursorY = r
+					ctx.commentOpen, ctx.commentOpenRow = true, r
+				}
+			}
+		}
 		ctx.updateGlobalStatus("Comment left on "+tview.Escape(saved.Location())+" for /giff in Claude Code  I:comments", "forestgreen")
 	})
 }
@@ -164,23 +171,6 @@ func showModal(ctx *DiffViewContext, name string, box tview.Primitive, height in
 		AddPage(name, modal, true, true)
 	ctx.app.SetRoot(pages, true)
 	ctx.app.SetFocus(focus)
-}
-
-// replyToComment opens a text area under the thread of c, on the cursor's
-// line, for a reply to its answer
-func replyToComment(ctx *DiffViewContext, c comments.Comment) {
-	if c.Status != comments.StatusAnswered {
-		ctx.updateGlobalStatus("Wait for the answer to reply, or select the lines with V for a new comment", "tomato")
-		return
-	}
-	title := fmt.Sprintf(" Reply on %s  (Option+Enter:send  Esc:cancel) ", tview.Escape(c.Location()))
-	showCommentInput(ctx, title, *ctx.cursorY, true, func(text string) {
-		if err := comments.Reply(ctx.repoRoot, c.ID, text); err != nil {
-			ctx.updateGlobalStatus("Failed to save the reply: "+err.Error(), "tomato")
-			return
-		}
-		ctx.updateGlobalStatus("Replied on "+tview.Escape(c.Location())+" for /giff in Claude Code  I:comments", "forestgreen")
-	})
 }
 
 // deleteCommentAtCursor deletes the comment on the cursor's line, the last
@@ -212,21 +202,22 @@ func redrawDiffPane(ctx *DiffViewContext) {
 }
 
 // showCommentInput opens a text area under row of the diff pane, as GitHub
-// does under the lines of a review comment, or under the comments on row for
-// a reply, and calls save with its text on Option+Enter
-func showCommentInput(ctx *DiffViewContext, title string, row int, reply bool, save func(string)) {
+// does under the lines of a review comment, and calls save with its text on
+// Option+Enter
+func showCommentInput(ctx *DiffViewContext, title string, row int, save func(string)) {
 	focus := ctx.app.GetFocus()
 	background := util.ModalBackgroundColor.ToTcellColor()
-	border := tcell.GetColor(string(util.CommitAreaBorderColor))
 
 	input := tview.NewTextArea().SetPlaceholder("Ask Claude Code about these lines, or ask it to change them")
 	input.SetTextStyle(tcell.StyleDefault.Foreground(util.MainTextColor.ToTcellColor()).Background(background))
 	input.SetPlaceholderStyle(tcell.StyleDefault.Foreground(util.PlaceholderColor.ToTcellColor()).Background(background))
 	input.SetBackgroundColor(background)
-	input.SetBorder(true).SetBorderColor(border).SetTitle(title).SetTitleAlign(tview.AlignLeft)
+	// Gold, as the comment it becomes is until it is answered
+	gold := tcell.GetColor("gold")
+	input.SetBorder(true).SetBorderColor(gold).SetTitleColor(gold).SetTitle(title).SetTitleAlign(tview.AlignLeft)
 
 	// Room under the lines, which the text area lies over
-	editing := &commentEditing{row: row, height: commentInputHeight, reply: reply}
+	editing := &commentEditing{row: row, height: commentInputHeight}
 	ctx.commentEditing = editing
 	redrawDiffPane(ctx)
 	closeInput := func() {
@@ -263,7 +254,7 @@ func showCommentInput(ctx *DiffViewContext, title string, row int, reply bool, s
 			x, y, width, height = bx, ay, ax+aw-bx, ah
 		}
 		offset, _ := view.GetScrollOffset()
-		top := y + row + 1 + editing.threadRows - offset
+		top := y + row + 1 - offset
 		rows := min(commentInputHeight, y+height-top)
 		return x + 2, top, max(width-2, 10), max(rows, 3)
 	}}
@@ -397,6 +388,10 @@ func showComments(ctx *DiffViewContext) {
 			row, col := detail.GetScrollOffset()
 			detail.ScrollTo(max(row-1, 0), col)
 			return nil
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'i':
+			closeModal(ctx, focus)
+			showCommentChat(ctx, list[picker.GetCurrentItem()].ID)
+			return nil
 		case event.Key() == tcell.KeyRune && keyRune(event) == 'D':
 			i := picker.GetCurrentItem()
 			if err := comments.Remove(ctx.repoRoot, list[i].ID); err != nil {
@@ -424,7 +419,7 @@ func showComments(ctx *DiffViewContext) {
 		AddItem(detail, 0, 1, false)
 	box.SetBackgroundColor(background)
 	box.SetBorder(true).SetBorderColor(border).
-		SetTitle(fmt.Sprintf(" %s  (j/k:select  Enter:show  D:delete  C-e/C-y:scroll answer  Esc:close) ", plural(len(list), "comment")))
+		SetTitle(fmt.Sprintf(" %s  (j/k:select  Enter:show  i:chat  D:delete  C-e/C-y:scroll  Esc:close) ", plural(len(list), "comment")))
 	_, _, _, height := ctx.mainView.GetRect()
 	showModal(ctx, "comments", box, max(height-4, listRows+10), picker)
 }

@@ -122,6 +122,10 @@ type DiffViewContext struct {
 	// redrawComments, if non-nil, draws the pane again when the comments
 	// change, in place of drawing it plainly
 	redrawComments func()
+	// commentOpen is whether the comment on the row commentOpenRow shows
+	// under it, opened with 'i' until the cursor leaves the row
+	commentOpen    bool
+	commentOpenRow int
 }
 
 // applyUndoRedoInDiffView runs the given undo/redo action and refreshes both
@@ -717,8 +721,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				return nil
 			case 'I':
+				// The chat of the comment on the cursor's line, or the list
+				// of all the comments
 				if ctx.mainView != nil {
-					showComments(ctx)
+					if cs := commentRows(ctx)[*ctx.cursorY]; len(cs) > 0 && !*ctx.isSelecting {
+						showCommentChat(ctx, cs[len(cs)-1].ID)
+					} else {
+						showComments(ctx)
+					}
 				}
 				return nil
 			case 'D':

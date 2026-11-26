@@ -97,8 +97,8 @@ $ giff -v         # show version
 | `l` / `h` (on a word) | Stretch the word under the `]` cursor over the next / previous word, with what lies between, e.g. `scheduled` → `scheduled-ecs` → `scheduled-ecs-task` (outside a word, they scroll sideways) |
 | `go` | Jump to the definition of the word under the `]` cursor, found with `git grep` (several candidates are listed with a preview of their code to pick from; on the `source` of a Terraform module, the module's files; see [the details](./docs/definition-jump.md)) |
 | `Ctrl+O` | Back to where `go` was pressed |
-| `i` | Leave a question or a request on the line under the cursor, or the lines selected with `V`, for Claude Code to answer (see [Asking Claude Code](#asking-claude-code)) |
-| `I` | The comments left with `i` and their answers |
+| `i` | Leave a question or a request on the line under the cursor, or the lines selected with `V`, for Claude Code to answer (see [Asking Claude Code](#asking-claude-code)). On a line with a comment, open or close it |
+| `I` | The chat with Claude Code on the comment of the line under the cursor, or else the list of all the comments |
 | `D` | Delete the comment on the line under the cursor |
 | `e` | Toggle fold |
 | `s` | Split view |
@@ -120,7 +120,7 @@ The PR diff (`pr`) and the commits of the Git log (`Ctrl+L`) are read-only: the 
 
 `i` in the diff view (or the file view) opens a text area right under the line under the cursor, or the lines selected with `V`, as GitHub does for a review comment, to leave a question or a request on them. `Option+Enter` saves it as a comment, with the file, its lines and their code. A Claude Code session started in the same repository picks the comments up and answers them, and giff tells when an answer arrives.
 
-A line with comments has a mark on its line number, yellow while they wait for an answer and green once answered. With the cursor on it, the comments and their answers show under it, and `i` there replies to the answer: Claude Code answers the reply with the whole exchange in mind. `D` on it deletes the comment. `I` lists all the comments with their answers (`Enter` shows a comment's lines, `D` deletes it).
+A line with comments has a mark on its line number, yellow while they wait for an answer and green once answered. `i` on it opens the comment and its answer in full under it, until `i` again or the cursor leaves the line (a comment just written stays open the same way). `I` there opens the chat on it, to go on with Claude Code: `Option+Enter` sends a reply, Claude Code answers it with the whole exchange in mind, and the answer shows up in the chat as it arrives (`Tab` moves to the chat to scroll it, `Esc` closes it). `D` on the line deletes the comment. Elsewhere, `I` lists all the comments (`Enter` shows a comment's lines, `i` opens its chat, `D` deletes it).
 
 Install the `giff` skill for Claude Code once:
 

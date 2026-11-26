@@ -11,8 +11,8 @@ import (
 
 // The comments left with 'i' show in the diff pane, after the pane is drawn:
 // a mark on the line number of the lines that have one, and under the
-// cursor's line the comments on it with their answers, as GitHub shows a
-// review comment under its code. While a comment is written, blank rows under
+// cursor's line, once opened with 'i', the comments on it with their
+// answers, as GitHub shows a review comment under its code. While a comment is written, blank rows under
 // its lines make room for the text area, which lies over them.
 //
 // The rows added come after the cursor's, and the pane is drawn anew on every
@@ -20,13 +20,10 @@ import (
 // in, never shift.
 
 // commentEditing is the comment being written: the text area lies over the
-// height blank rows after row, after the comments on row when it is a reply
-// to them, which take threadRows rows
+// height blank rows after row
 type commentEditing struct {
-	row        int
-	height     int
-	reply      bool
-	threadRows int
+	row    int
+	height int
 }
 
 // commentHosts maps the text views of a diff pane to its context, so any
@@ -91,6 +88,9 @@ func refreshCommentPanes() {
 		for i, v := range views {
 			v.ScrollTo(rows[i], cols[i])
 		}
+	}
+	if commentChatRefresh != nil {
+		commentChatRefresh()
 	}
 }
 
@@ -212,6 +212,10 @@ func decorateComments(view *tview.TextView, cursorY int) {
 		views = []*tview.TextView{ctx.beforeView, ctx.afterView}
 		main = ctx.afterView
 	}
+	// The comment opened closes once the cursor leaves its row
+	if cursorY >= 0 && cursorY != ctx.commentOpenRow {
+		ctx.commentOpen = false
+	}
 	rows := commentRows(ctx)
 	if len(rows) == 0 && ctx.commentEditing == nil {
 		return
@@ -236,14 +240,10 @@ func decorateComments(view *tview.TextView, cursorY int) {
 	_, _, width, _ := main.GetInnerRect()
 	if e := ctx.commentEditing; e != nil {
 		under = e.row
-		if e.reply {
-			block = commentBlock(rows[e.row], width, false)
-		}
-		e.threadRows = len(block)
-		block = append(block, make([]string, e.height)...)
-	} else if cs, ok := rows[cursorY]; ok && cursorY >= 0 && (ctx.leftPaneFocused == nil || !*ctx.leftPaneFocused) {
+		block = make([]string, e.height)
+	} else if cs, ok := rows[cursorY]; ok && cursorY >= 0 && ctx.commentOpen && (ctx.leftPaneFocused == nil || !*ctx.leftPaneFocused) {
 		under = cursorY
-		block = commentBlock(cs, width, true)
+		block = commentBlock(cs, width)
 	}
 	if under >= 0 && under < len(mainText) {
 		for i := range texts {
@@ -263,6 +263,14 @@ func decorateComments(view *tview.TextView, cursorY int) {
 		}
 		v.ScrollTo(row, col)
 	}
+}
+
+// toggleCommentAtCursor opens the comment on the cursor's line under it, or
+// closes it when it is open
+func toggleCommentAtCursor(ctx *DiffViewContext) {
+	ctx.commentOpen = !(ctx.commentOpen && ctx.commentOpenRow == *ctx.cursorY)
+	ctx.commentOpenRow = *ctx.cursorY
+	redrawDiffPane(ctx)
 }
 
 // scrollToShow returns the scroll row that shows the rows from under to under
@@ -289,13 +297,10 @@ func commentMark(cs []comments.Comment) string {
 	return "[forestgreen]●[-]"
 }
 
-// commentBlockMaxLines is how many lines an answer shows under its code at
-// most; I lists the comments in full
-const commentBlockMaxLines = 12
-
-// commentBlock draws the threads of the comments cs as boxes width columns
-// wide, to show under the line they are on, with the key to reply when hint
-func commentBlock(cs []comments.Comment, width int, hint bool) []string {
+// commentBlock draws the comments cs as boxes width columns wide, to show
+// under the line they are on: each with its question and its first answer in
+// full, as the rest of the exchange goes on in the chat I opens
+func commentBlock(cs []comments.Comment, width int) []string {
 	const indent = "  "
 	inner := max(width-len(indent)-4, 20)
 	var lines []string
@@ -309,7 +314,7 @@ func commentBlock(cs []comments.Comment, width int, hint bool) []string {
 		}
 		head := "┌ " + state + " "
 		lines = append(lines, indent+"["+color+"]"+head+strings.Repeat("─", max(inner+2-len([]rune(head)), 0))+"[-]")
-		add := func(label, text string, limit int) {
+		add := func(label, text string) {
 			wrapped := []string{}
 			for _, para := range strings.Split(text, "\n") {
 				w := tview.WordWrap(tview.Escape(para), inner-3)
@@ -317,9 +322,6 @@ func commentBlock(cs []comments.Comment, width int, hint bool) []string {
 					w = []string{""}
 				}
 				wrapped = append(wrapped, w...)
-			}
-			if limit > 0 && len(wrapped) > limit {
-				wrapped = append(wrapped[:limit], "[gray]… I:comments for the rest[-]")
 			}
 			for i, w := range wrapped {
 				prefix := "   "
@@ -329,21 +331,21 @@ func commentBlock(cs []comments.Comment, width int, hint bool) []string {
 				lines = append(lines, indent+"["+color+"]│[-] "+prefix+w)
 			}
 		}
-		for _, m := range c.Thread {
+		shown := min(len(c.Thread), 2)
+		for _, m := range c.Thread[:shown] {
 			if m.From == comments.FromClaude {
-				add("[forestgreen]A.[-] ", m.Text, commentBlockMaxLines)
+				add("[forestgreen]A.[-] ", m.Text)
 			} else {
-				add("[gold]Q.[-] ", m.Text, 0)
+				add("[gold]Q.[-] ", m.Text)
 			}
 		}
+		if more := len(c.Thread) - shown; more > 0 {
+			lines = append(lines, indent+"["+color+"]│[-] [gray]… "+plural(more, "more message")+" in the chat (I)[-]")
+		}
 		foot := "└"
-		// The keys reply to and delete the last comment of the line
-		if hint && i == len(cs)-1 {
-			if c.Status == comments.StatusAnswered {
-				foot += "─ i:reply  D:delete "
-			} else {
-				foot += "─ D:delete "
-			}
+		// The keys open the chat of and delete the last comment of the line
+		if i == len(cs)-1 {
+			foot += "─ i:close  I:chat  D:delete "
 		}
 		lines = append(lines, indent+"["+color+"]"+foot+strings.Repeat("─", max(inner+2-len([]rune(foot)), 0))+"[-]")
 	}
