@@ -335,7 +335,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				}
 				performSearch(ctx)
 			case tcell.KeyRune:
-				*ctx.searchInput += string(event.Rune())
+				*ctx.searchInput += string(keyRune(event))
 				performSearch(ctx)
 			}
 			return nil
@@ -343,7 +343,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 
 		// go jumps to the definition of the word cursor's word
 		gPending := *ctx.gPressed && time.Since(*ctx.lastGTime) < 500*time.Millisecond
-		if gPending && event.Key() == tcell.KeyRune && event.Rune() == 'o' {
+		if gPending && event.Key() == tcell.KeyRune && keyRune(event) == 'o' {
 			*ctx.gPressed = false
 			jumpToDefinition(ctx)
 			return nil
@@ -359,14 +359,14 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 		// Any key other than the word cursor's own turns it off
 		if wordCursorActive(ctx) {
 			// 'y' yanks the word, like a visual selection
-			if event.Key() == tcell.KeyRune && event.Rune() == 'y' {
+			if event.Key() == tcell.KeyRune && keyRune(event) == 'y' {
 				yankWord(ctx)
 				return nil
 			}
 			// 'l' / 'h' take in the next / previous word too
-			if event.Key() == tcell.KeyRune && (event.Rune() == 'l' || event.Rune() == 'h') {
+			if event.Key() == tcell.KeyRune && (keyRune(event) == 'l' || keyRune(event) == 'h') {
 				direction := 1
-				if event.Rune() == 'h' {
+				if keyRune(event) == 'h' {
 					direction = -1
 				}
 				extendWord(ctx, direction)
@@ -376,8 +376,8 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			// does the g of go
 			wordKey := event.Key() == tcell.KeyEsc ||
 				event.Key() == tcell.KeyCtrlE || event.Key() == tcell.KeyCtrlY ||
-				(event.Key() == tcell.KeyRune && (event.Rune() == 'n' || event.Rune() == 'N' ||
-					event.Rune() == ']' || event.Rune() == '[' || (event.Rune() == 'g' && !gPending)))
+				(event.Key() == tcell.KeyRune && (keyRune(event) == 'n' || keyRune(event) == 'N' ||
+					keyRune(event) == ']' || keyRune(event) == '[' || (keyRune(event) == 'g' && !gPending)))
 			if !wordKey {
 				clearWordCursor(ctx)
 			}
@@ -457,7 +457,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 			applyUndoRedoInDiffView(ctx, ctx.undoStack.Redo, "redo")
 			return nil
 		case tcell.KeyRune:
-			switch event.Rune() {
+			switch keyRune(event) {
 			case 's':
 				// Toggle split view
 				*ctx.isSplitView = !*ctx.isSplitView
@@ -786,7 +786,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				// The next / previous match of the search, or of the word the
 				// word cursor is on
 				direction := 1
-				if event.Rune() == 'N' {
+				if keyRune(event) == 'N' {
 					direction = -1
 				}
 				switch {
@@ -805,7 +805,7 @@ func SetupDiffViewKeyBindings(ctx *DiffViewContext) {
 				// previous line at the end
 				if !*ctx.isSelecting {
 					direction := 1
-					if event.Rune() == '[' {
+					if keyRune(event) == '[' {
 						direction = -1
 					}
 					moveWordCursor(ctx, direction)
@@ -1468,7 +1468,7 @@ func diffOnlyKey(event *tcell.EventKey) bool {
 	if event.Key() == tcell.KeyCtrlR {
 		return true
 	}
-	return event.Key() == tcell.KeyRune && strings.ContainsRune("aAduesw", event.Rune())
+	return event.Key() == tcell.KeyRune && strings.ContainsRune("aAduesw", keyRune(event))
 }
 
 // getCursorFileLineNumber returns the line number of the current file that the

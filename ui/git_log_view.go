@@ -1039,7 +1039,7 @@ func (glv *GitLogView) setupLogKeyBindings() {
 			return nil
 		}
 
-		switch event.Rune() {
+		switch keyRune(event) {
 		case 'q':
 			glv.quitApplication()
 			return nil

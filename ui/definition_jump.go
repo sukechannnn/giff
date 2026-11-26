@@ -228,12 +228,12 @@ func showDefinitionPicker(ctx *DiffViewContext, defs []git.Location, title, word
 	})
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && event.Rune() == 'q':
+		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && keyRune(event) == 'q':
 			closePicker()
 			return nil
-		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'j':
 			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
-		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'k':
 			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
 		}
 		return event

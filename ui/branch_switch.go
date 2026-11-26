@@ -99,15 +99,15 @@ func showBranchPicker(app *tview.Application, mainView, focusBack tview.Primitiv
 			filter.SetText("")
 			fill()
 			return nil
-		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && event.Rune() == 'q':
+		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && keyRune(event) == 'q':
 			closePicker()
 			return nil
-		case event.Key() == tcell.KeyRune && event.Rune() == '/':
+		case event.Key() == tcell.KeyRune && keyRune(event) == '/':
 			app.SetFocus(filter)
 			return nil
-		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'j':
 			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
-		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'k':
 			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
 		}
 		return event

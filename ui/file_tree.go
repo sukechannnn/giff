@@ -1049,7 +1049,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 				ctx.filterInput = string(runes[:ctx.filterCursor])
 				redrawStatus()
 			case tcell.KeyRune:
-				r := event.Rune()
+				r := keyRune(event)
 				ctx.filterInput = string(runes[:ctx.filterCursor]) + string(r) + string(runes[ctx.filterCursor:])
 				ctx.filterCursor++
 				redrawStatus()
@@ -1265,7 +1265,7 @@ func SetupFileListKeyBindings(ctx *FileListKeyContext) {
 			}
 			return nil
 		case tcell.KeyRune:
-			switch event.Rune() {
+			switch keyRune(event) {
 			case 'k':
 				moveFileListSelection(ctx, -1)
 				return nil

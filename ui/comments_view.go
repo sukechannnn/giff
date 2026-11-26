@@ -239,7 +239,7 @@ func showCommentInput(ctx *DiffViewContext, title string, row int, reply bool, s
 			closeInput()
 			redrawDiffPane(ctx)
 			return nil
-		case event.Key() == tcell.KeyEnter && event.Modifiers()&tcell.ModAlt != 0:
+		case isAltEnter(event):
 			text := strings.TrimSpace(input.GetText())
 			if text == "" {
 				ctx.updateGlobalStatus("The comment is empty", "tomato")
@@ -382,12 +382,12 @@ func showComments(ctx *DiffViewContext) {
 	})
 	picker.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch {
-		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && (event.Rune() == 'q' || event.Rune() == 'I'):
+		case event.Key() == tcell.KeyEsc, event.Key() == tcell.KeyRune && (keyRune(event) == 'q' || keyRune(event) == 'I'):
 			closeModal(ctx, focus)
 			return nil
-		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'j':
 			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
-		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'k':
 			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
 		case event.Key() == tcell.KeyCtrlE:
 			row, col := detail.GetScrollOffset()
@@ -397,7 +397,7 @@ func showComments(ctx *DiffViewContext) {
 			row, col := detail.GetScrollOffset()
 			detail.ScrollTo(max(row-1, 0), col)
 			return nil
-		case event.Key() == tcell.KeyRune && event.Rune() == 'D':
+		case event.Key() == tcell.KeyRune && keyRune(event) == 'D':
 			i := picker.GetCurrentItem()
 			if err := comments.Remove(ctx.repoRoot, list[i].ID); err != nil {
 				ctx.updateGlobalStatus("Failed to delete the comment: "+err.Error(), "tomato")

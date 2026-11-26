@@ -1811,6 +1811,10 @@ func RootEditor(app *tview.Application, stagedFiles, modifiedFiles, untrackedFil
 	}
 
 	commitTextArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if isAltEnter(event) {
+			// However the terminal sends Option+Enter
+			event = tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModAlt)
+		}
 		switch event.Key() {
 		case tcell.KeyEnter:
 			// Option+Enter (Alt+Enter) to execute commit
